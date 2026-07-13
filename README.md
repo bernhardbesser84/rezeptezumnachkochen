@@ -15,7 +15,7 @@ Alle Geräte brauchen denselben **Familien-Code** und dieselbe **Cloud-Verbindun
 **Nein.** Für euch privat reicht:
 
 - **Samsung Galaxy + Tablett**: APK installieren (kein Google Store nötig)
-- **iPhone**: App einmal mit einem Mac / Flutter bauen (oder später TestFlight). Store ist optional.
+- **iPhone**: kostenlose **Web-App** (Safari → Zum Home-Bildschirm) – kein 99 €-Abo
 
 ## iPhone ohne 99 € (empfohlen)
 
@@ -65,15 +65,8 @@ flutter pub get
 flutter analyze
 flutter test
 flutter build apk --debug
+flutter build web --release --base-href "/rezeptezumnachkochen/"
 ```
-
-## iPhone-Hinweis
-
-Siehe ausführlich: [`docs/IPHONE_TESTFLIGHT.md`](docs/IPHONE_TESTFLIGHT.md)
-
-Der Teilen-Button braucht in Xcode noch das Target **Share Extension**
-(Dateien sind vorbereitet). Bis dahin geht auch der Kurzbefehl mit
-`rezeptnachkochen://add?text=...`.
 
 ## Wichtig
 
