@@ -6,7 +6,8 @@ plugins {
 
 android {
     namespace = "de.rezeptezumnachkochen.rezept_nachkochen"
-    compileSdk = flutter.compileSdkVersion
+    // receive_sharing_intent braucht SDK 37
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -15,12 +16,9 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "de.rezeptezumnachkochen.rezept_nachkochen"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 37
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
