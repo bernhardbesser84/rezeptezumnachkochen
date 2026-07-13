@@ -1,2 +1,83 @@
-# rezeptezumnachkochen
-Videos zu Rezepte machen
+# Rezept Nachkochen
+
+Familien-App: Rezeptvideo teilen → Einkaufsliste + Schritt-für-Schritt-Anleitung + Video.
+
+## Euer Tagesablauf
+
+1. **Bernhard am iPhone (Web-App)**: Rezeptvideo finden → Link kopieren → Web-App → Anleitung erstellen  
+2. **Zuhause am Samsung-Tablett**: Rezept öffnen → „Am Tablett nachkochen“ + Video anschauen  
+3. **Frau am Samsung Galaxy**: Einkaufsliste öffnen → im Laden abhaken, was schon im Korb ist  
+
+Alle Geräte brauchen denselben **Familien-Code** und dieselbe **Cloud-Verbindung**.
+
+## Muss das über den App Store?
+
+**Nein.** Für euch privat reicht:
+
+- **Samsung Galaxy + Tablett**: APK installieren (kein Google Store nötig)
+- **iPhone**: kostenlose **Web-App** (Safari → Zum Home-Bildschirm) – kein 99 €-Abo
+
+## Hosting (Web-App)
+
+**Empfohlen für dich: Vercel** (kennst du schon).
+
+👉 Kurzanleitung: [`docs/VERCEL.md`](docs/VERCEL.md)
+
+GitHub Pages brauchen wir nicht – das verursachte nur die roten Fehler,
+solange Pages im Repo nicht eingeschaltet war.
+
+## iPhone ohne 99 € (empfohlen)
+
+Die App läuft auch als **Web-App** im Safari.
+
+👉 Anleitung: [`docs/IPHONE_WEB_APP.md`](docs/IPHONE_WEB_APP.md)
+
+1. Link in Safari öffnen  
+2. Teilen → **Zum Home-Bildschirm**  
+3. Rezept-Links kopieren und in der App einfügen  
+
+Kein Apple Developer Abo nötig. Galaxy/Tablett bleiben bei der Android-App, synchron über Familie/Cloud.
+
+## iPhone / TestFlight (optional, kostet)
+
+Nur falls du später doch eine echte iPhone-App willst:
+
+👉 [`docs/IPHONE_TESTFLIGHT.md`](docs/IPHONE_TESTFLIGHT.md)
+
+## Familie & Cloud einrichten (einmalig, kostenlos)
+
+1. Konto auf [supabase.com](https://supabase.com) erstellen  
+2. Neues Projekt anlegen  
+3. Links **SQL** → Editor → Inhalt aus `supabase/schema.sql` einfügen → **Run**  
+4. Links **Project Settings → API**:
+   - Project URL kopieren
+   - `anon` `public` Key kopieren  
+5. In der App: **Familie** öffnen  
+   - Geräte-Name z. B. `Bernhard iPhone`  
+   - Familien-Code erstellen (z. B. `KOCH-4F2A`)  
+   - URL + Key eintragen  
+   - **Verbinden & Sync** tippen  
+6. Denselben Code + URL + Key auf Tablett und Galaxy eintragen  
+
+## Funktionen
+
+- Teilen von Facebook & Co. (Android jetzt, iPhone vorbereitet)
+- Zutatenliste / Einkaufsliste mit Abhaken
+- Schritt-für-Schritt-Anleitung + Kochmodus fürs Tablett
+- Video-Link am Rezept
+- Optional: OpenAI-Schlüssel für bessere Auswertung
+
+## Entwickeln
+
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+flutter build web --release --base-href "/rezeptezumnachkochen/"
+```
+
+## Wichtig
+
+Ohne Cloud sehen die Geräte **nicht** dieselbe Liste.  
+Mit Cloud (Supabase) synchronisieren sich Rezepte und Einkaufsabhaken in wenigen Sekunden.
