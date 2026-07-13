@@ -1,19 +1,18 @@
 import 'package:flutter/material.dart';
 
-import '../models/recipe.dart';
+import '../services/app_repository.dart';
 import '../services/recipe_extractor.dart';
-import '../services/recipe_storage.dart';
 import '../theme/app_theme.dart';
 
 class AddRecipeScreen extends StatefulWidget {
   const AddRecipeScreen({
     super.key,
-    required this.storage,
+    required this.repository,
     required this.extractor,
     this.initialSharedText,
   });
 
-  final RecipeStorage storage;
+  final AppRepository repository;
   final RecipeExtractor extractor;
   final String? initialSharedText;
 
@@ -24,6 +23,7 @@ class AddRecipeScreen extends StatefulWidget {
 class _AddRecipeScreenState extends State<AddRecipeScreen> {
   late final TextEditingController _controller;
   bool _loading = false;
+  bool _alsoShopping = true;
   String? _error;
 
   @override
@@ -45,7 +45,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     });
 
     try {
-      final apiKey = await widget.storage.getApiKey();
+      final apiKey = await widget.repository.storage.getApiKey();
       final text = _controller.text.trim();
       final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(text);
       final url = urlMatch?.group(0);
@@ -56,7 +56,10 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         apiKey: apiKey,
       );
 
-      await widget.storage.upsertRecipe(recipe);
+      await widget.repository.saveRecipe(recipe);
+      if (_alsoShopping) {
+        await widget.repository.addRecipeToShopping(recipe);
+      }
       if (!mounted) return;
       Navigator.pop(context, recipe);
     } catch (e) {
@@ -93,11 +96,11 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  '1. Öffne ein Rezeptvideo bei Facebook, Instagram, TikTok '
-                  'oder YouTube.\n'
-                  '2. Tippe auf Teilen und wähle „Rezept Nachkochen“.\n'
-                  '3. Oder kopiere den Link / die Videobeschreibung und füge '
-                  'sie hier ein.',
+                  '1. Am iPhone ein Rezeptvideo öffnen.\n'
+                  '2. Auf Teilen tippen und „Rezept Nachkochen“ wählen '
+                  '(oder Link hier einfügen).\n'
+                  '3. Anleitung erstellen – danach erscheint das Rezept '
+                  'auch auf Tablett und Galaxy.',
                 ),
               ],
             ),
@@ -114,7 +117,16 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
               alignLabelWithHint: true,
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Zutaten gleich auf die Einkaufsliste'),
+            value: _alsoShopping,
+            onChanged: _loading
+                ? null
+                : (value) => setState(() => _alsoShopping = value),
+          ),
+          const SizedBox(height: 8),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -138,14 +150,11 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Tipp: Mit einem OpenAI API-Schlüssel in den Einstellungen '
-            'werden Zutaten und Schritte deutlich besser erkannt.',
+            'Tipp: Mit OpenAI-Schlüssel unter Einstellungen werden Zutaten '
+            'und Schritte deutlich besser.',
           ),
         ],
       ),
     );
   }
 }
-
-/// Rückgabewert bleibt Recipe, damit die Home-Seite direkt öffnen kann.
-typedef AddedRecipe = Recipe;

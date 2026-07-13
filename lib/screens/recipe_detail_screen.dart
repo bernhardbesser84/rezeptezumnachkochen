@@ -2,16 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/recipe.dart';
+import '../services/app_repository.dart';
 import '../theme/app_theme.dart';
+import 'cook_mode_screen.dart';
 
 class RecipeDetailScreen extends StatelessWidget {
   const RecipeDetailScreen({
     super.key,
     required this.recipe,
+    required this.repository,
     required this.onDelete,
   });
 
   final Recipe recipe;
+  final AppRepository repository;
   final Future<void> Function() onDelete;
 
   Future<void> _openSource(BuildContext context) async {
@@ -24,6 +28,20 @@ class RecipeDetailScreen extends StatelessWidget {
         const SnackBar(content: Text('Link konnte nicht geöffnet werden.')),
       );
     }
+  }
+
+  Future<void> _addToShopping(BuildContext context) async {
+    final count = await repository.addRecipeToShopping(recipe);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          count == 0
+              ? 'Zutaten waren schon auf der Einkaufsliste.'
+              : '$count Zutaten zur Einkaufsliste hinzugefügt.',
+        ),
+      ),
+    );
   }
 
   Future<void> _confirmDelete(BuildContext context) async {
@@ -58,9 +76,9 @@ class RecipeDetailScreen extends StatelessWidget {
         actions: [
           if (recipe.sourceUrl.isNotEmpty)
             IconButton(
-              tooltip: 'Originalvideo öffnen',
+              tooltip: 'Video anschauen',
               onPressed: () => _openSource(context),
-              icon: const Icon(Icons.open_in_new),
+              icon: const Icon(Icons.play_circle_outline),
             ),
           IconButton(
             tooltip: 'Löschen',
@@ -97,6 +115,31 @@ class RecipeDetailScreen extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 14),
+          if (recipe.sourceUrl.isNotEmpty)
+            FilledButton.tonalIcon(
+              onPressed: () => _openSource(context),
+              icon: const Icon(Icons.ondemand_video),
+              label: const Text('Video zum Anschauen öffnen'),
+            ),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => CookModeScreen(recipe: recipe),
+                ),
+              );
+            },
+            icon: const Icon(Icons.soup_kitchen_outlined),
+            label: const Text('Am Tablett nachkochen'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => _addToShopping(context),
+            icon: const Icon(Icons.shopping_cart_outlined),
+            label: const Text('Zur Einkaufsliste'),
+          ),
           if (recipe.notes != null && recipe.notes!.isNotEmpty) ...[
             const SizedBox(height: 16),
             Container(
@@ -111,11 +154,11 @@ class RecipeDetailScreen extends StatelessWidget {
           ],
           const SizedBox(height: 24),
           Text(
-            'Einkaufsliste',
+            'Einkaufsliste / Zutaten',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 6),
-          const Text('Das brauchst du an Lebensmitteln:'),
+          const Text('Das braucht ihr an Lebensmitteln:'),
           const SizedBox(height: 12),
           ...recipe.ingredients.asMap().entries.map(
                 (entry) => _IngredientTile(
@@ -125,7 +168,7 @@ class RecipeDetailScreen extends StatelessWidget {
               ),
           const SizedBox(height: 28),
           Text(
-            'So bereitest du es zu',
+            'So bereitet ihr es zu',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 6),

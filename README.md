@@ -1,35 +1,60 @@
 # Rezept Nachkochen
 
-Flutter-App, mit der du Rezeptvideos von Facebook, Instagram, TikTok und Co. über den **Teilen**-Button (oder per Link) speichern kannst.
+Familien-App: Rezeptvideo teilen → Einkaufsliste + Schritt-für-Schritt-Anleitung + Video.
 
-Die App macht daraus:
+## Euer Tagesablauf
 
-- eine **Einkaufsliste / Zutatenliste**
-- eine **Schritt-für-Schritt-Anleitung** zum Nachkochen
+1. **Bernhard am iPhone**: Rezeptvideo finden → Teilen → App → Anleitung erstellen  
+2. **Zuhause am Samsung-Tablett**: Rezept öffnen → „Am Tablett nachkochen“ + Video anschauen  
+3. **Frau am Samsung Galaxy**: Einkaufsliste öffnen → im Laden abhaken, was schon im Korb ist  
 
-## So benutzt du die App
+Alle Geräte brauchen denselben **Familien-Code** und dieselbe **Cloud-Verbindung**.
 
-1. App auf dem Android-Handy installieren (Debug-APK oder `flutter run`)
-2. In Facebook/Instagram/TikTok/YouTube bei einem Rezeptvideo auf **Teilen** tippen
-3. **Rezept Nachkochen** auswählen
-4. Auf **Anleitung erstellen** tippen
+## Muss das über den App Store?
 
-Alternativ: In der App auf **Video teilen / Link** tippen und den Link oder die Videobeschreibung einfügen.
+**Nein.** Für euch privat reicht:
 
-## Bessere Ergebnisse mit KI (optional)
+- **Samsung Galaxy + Tablett**: APK installieren (kein Google Store nötig)
+- **iPhone**: App einmal mit einem Mac / Flutter bauen (oder später TestFlight). Store ist optional.
 
-Unter **Einstellungen** kannst du einen eigenen [OpenAI API-Schlüssel](https://platform.openai.com/api-keys) hinterlegen. Dann erkennt die App Zutaten und Schritte deutlich besser.
+## Familie & Cloud einrichten (einmalig, kostenlos)
 
-Ohne Schlüssel funktioniert die App trotzdem – dann mit einfacherer Auswertung und Beispielrezept.
+1. Konto auf [supabase.com](https://supabase.com) erstellen  
+2. Neues Projekt anlegen  
+3. Links **SQL** → Editor → Inhalt aus `supabase/schema.sql` einfügen → **Run**  
+4. Links **Project Settings → API**:
+   - Project URL kopieren
+   - `anon` `public` Key kopieren  
+5. In der App: **Familie** öffnen  
+   - Geräte-Name z. B. `Bernhard iPhone`  
+   - Familien-Code erstellen (z. B. `KOCH-4F2A`)  
+   - URL + Key eintragen  
+   - **Verbinden & Sync** tippen  
+6. Denselben Code + URL + Key auf Tablett und Galaxy eintragen  
+
+## Funktionen
+
+- Teilen von Facebook & Co. (Android jetzt, iPhone vorbereitet)
+- Zutatenliste / Einkaufsliste mit Abhaken
+- Schritt-für-Schritt-Anleitung + Kochmodus fürs Tablett
+- Video-Link am Rezept
+- Optional: OpenAI-Schlüssel für bessere Auswertung
 
 ## Entwickeln
 
 ```bash
 flutter pub get
 flutter analyze
+flutter test
 flutter build apk --debug
 ```
 
-## Projektziel
+## iPhone-Hinweis
 
-Ähnlich wie bei Apps wie „Was kann ich essen“: Schnell aus Social-Media-Rezeptvideos eine klare Nachkoch-Anleitung bekommen.
+Der Teilen-Button auf dem iPhone braucht zusätzlich eine **Share Extension** in Xcode
+(siehe `receive_sharing_intent` Doku). Bis dahin: Link kopieren und in der App einfügen.
+
+## Wichtig
+
+Ohne Cloud sehen die Geräte **nicht** dieselbe Liste.  
+Mit Cloud (Supabase) synchronisieren sich Rezepte und Einkaufsabhaken in wenigen Sekunden.

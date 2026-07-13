@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../services/recipe_storage.dart';
+import '../services/app_repository.dart';
 import '../theme/app_theme.dart';
+import 'family_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.storage});
+  const SettingsScreen({super.key, required this.repository});
 
-  final RecipeStorage storage;
+  final AppRepository repository;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -25,13 +26,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _load() async {
-    final key = await widget.storage.getApiKey();
+    final key = await widget.repository.storage.getApiKey();
     _controller.text = key ?? '';
     if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _save() async {
-    await widget.storage.setApiKey(_controller.text);
+    await widget.repository.storage.setApiKey(_controller.text);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Einstellungen gespeichert.')),
@@ -59,16 +60,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.home_outlined),
+                  title: const Text('Familie & Cloud'),
+                  subtitle: const Text(
+                    'Code für iPhone, Tablett und Galaxy einrichten',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            FamilyScreen(repository: widget.repository),
+                      ),
+                    );
+                  },
+                ),
+                const Divider(height: 32),
                 const Text(
                   'OpenAI API-Schlüssel (optional)',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Wenn du einen Schlüssel hinterlegst, macht die App aus '
-                  'Video-Links und Beschreibungen eine klarere Einkaufsliste '
-                  'und Schritt-für-Schritt-Anleitung. Ohne Schlüssel funktioniert '
-                  'die App trotzdem – dann mit einfacherer Auswertung.',
+                  'Damit aus Videos eine richtige Schritt-für-Schritt-Anleitung '
+                  'wird. Ohne Schlüssel funktioniert die App trotzdem, nur '
+                  'einfacher.',
                 ),
                 const SizedBox(height: 14),
                 TextField(
@@ -110,14 +128,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Teilen von Facebook & Co.',
+                        'Geräte-Ideen',
                         style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                       SizedBox(height: 8),
                       Text(
-                        'In der anderen App auf „Teilen“ tippen und dann '
-                        '„Rezept Nachkochen“ auswählen. Der Link landet '
-                        'automatisch in der App.',
+                        '• iPhone: Videos finden und teilen\n'
+                        '• Samsung-Tablett: große Kochschritte + Video\n'
+                        '• Galaxy-Handy: Einkaufsliste abhaken im Laden',
                       ),
                     ],
                   ),

@@ -1,7 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rezept_nachkochen/services/recipe_extractor.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:rezept_nachkochen/main.dart';
+import 'package:rezept_nachkochen/models/recipe.dart';
+import 'package:rezept_nachkochen/services/app_repository.dart';
+import 'package:rezept_nachkochen/services/family_sync_service.dart';
+import 'package:rezept_nachkochen/services/recipe_extractor.dart';
+import 'package:rezept_nachkochen/services/recipe_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -12,11 +16,10 @@ void main() {
 
   testWidgets('App startet und zeigt Starttitel', (tester) async {
     await tester.pumpWidget(const RezeptNachkochenApp());
-    // Speicher und Demo-Rezept laden
     await tester.pumpAndSettle();
 
     expect(find.text('Rezept Nachkochen'), findsWidgets);
-    expect(find.textContaining('Einkaufsliste'), findsWidgets);
+    expect(find.textContaining('Einkauf'), findsWidgets);
   });
 
   test('Lokale Auswertung erkennt Zutaten und Schritte', () async {
@@ -40,10 +43,26 @@ Zubereitung:
     expect(recipe.steps.length, greaterThanOrEqualTo(2));
   });
 
-  test('Beispielrezept ist vollständig', () {
-    final demo = RecipeExtractor().buildDemoRecipe();
-    expect(demo.title, isNotEmpty);
-    expect(demo.ingredients, isNotEmpty);
-    expect(demo.steps, isNotEmpty);
+  test('Einkaufsliste speichert Abhaken lokal', () async {
+    final storage = RecipeStorage();
+    final repo = AppRepository(storage: storage, sync: FamilySyncService());
+    final recipe = Recipe(
+      id: 'r1',
+      title: 'Testpasta',
+      ingredients: const ['500 g Nudeln', '1 Glas Pesto'],
+      steps: const ['Kochen', 'Mischen'],
+      sourceUrl: '',
+      createdAt: DateTime.now(),
+    );
+
+    await repo.saveRecipe(recipe);
+    final added = await repo.addRecipeToShopping(recipe);
+    expect(added, 2);
+
+    final items = await repo.loadShopping(pullRemote: false);
+    expect(items.length, 2);
+    await repo.setShoppingChecked(items.first, true);
+    final updated = await repo.loadShopping(pullRemote: false);
+    expect(updated.where((e) => e.checked).length, 1);
   });
 }

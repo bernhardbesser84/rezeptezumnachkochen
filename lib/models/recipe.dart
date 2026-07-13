@@ -37,11 +37,12 @@ class Recipe {
     return Recipe(
       id: json['id'] as String,
       title: json['title'] as String,
-      ingredients: (json['ingredients'] as List<dynamic>)
+      ingredients: (json['ingredients'] as List<dynamic>? ?? const [])
           .map((e) => e.toString())
           .toList(),
-      steps:
-          (json['steps'] as List<dynamic>).map((e) => e.toString()).toList(),
+      steps: (json['steps'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
       sourceUrl: json['sourceUrl'] as String? ?? '',
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
@@ -50,4 +51,36 @@ class Recipe {
       notes: json['notes'] as String?,
     );
   }
+
+  factory Recipe.fromCloud(Map<String, dynamic> json) {
+    return Recipe(
+      id: json['id'] as String,
+      title: json['title'] as String,
+      ingredients: (json['ingredients'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      steps: (json['steps'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      sourceUrl: json['source_url'] as String? ?? '',
+      createdAt: DateTime.tryParse(json['created_at'] as String? ?? '') ??
+          DateTime.now(),
+      servings: json['servings'] as String?,
+      prepTimeMinutes: json['prep_time_minutes'] as int?,
+      notes: json['notes'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toCloud({required String familyCode}) => {
+        'id': id,
+        'family_code': familyCode,
+        'title': title,
+        'ingredients': ingredients,
+        'steps': steps,
+        'source_url': sourceUrl,
+        'created_at': createdAt.toIso8601String(),
+        'servings': servings,
+        'prep_time_minutes': prepTimeMinutes,
+        'notes': notes,
+      };
 }
