@@ -17,6 +17,20 @@ Alle Geräte brauchen denselben **Familien-Code** und dieselbe **Cloud-Verbindun
 - **Samsung Galaxy + Tablett**: APK installieren (kein Google Store nötig)
 - **iPhone**: App einmal mit einem Mac / Flutter bauen (oder später TestFlight). Store ist optional.
 
+## iPhone / TestFlight
+
+Vollständige Anleitung (auch für zwischendurch am Handy lesbar):
+
+👉 [`docs/IPHONE_TESTFLIGHT.md`](docs/IPHONE_TESTFLIGHT.md)
+
+Kurzfassung:
+1. Apple Developer Konto anlegen
+2. App in App Store Connect anlegen
+3. Mit Mac oder Build-Dienst die iPhone-App bauen
+4. Per TestFlight aufs iPhone installieren
+
+Die Dateien für den Teilen-Button liegen schon unter `ios/Share Extension/`.
+
 ## Familie & Cloud einrichten (einmalig, kostenlos)
 
 1. Konto auf [supabase.com](https://supabase.com) erstellen  
@@ -51,8 +65,11 @@ flutter build apk --debug
 
 ## iPhone-Hinweis
 
-Der Teilen-Button auf dem iPhone braucht zusätzlich eine **Share Extension** in Xcode
-(siehe `receive_sharing_intent` Doku). Bis dahin: Link kopieren und in der App einfügen.
+Siehe ausführlich: [`docs/IPHONE_TESTFLIGHT.md`](docs/IPHONE_TESTFLIGHT.md)
+
+Der Teilen-Button braucht in Xcode noch das Target **Share Extension**
+(Dateien sind vorbereitet). Bis dahin geht auch der Kurzbefehl mit
+`rezeptnachkochen://add?text=...`.
 
 ## Wichtig
 

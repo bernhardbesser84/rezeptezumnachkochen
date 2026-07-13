@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
@@ -34,12 +35,15 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _familyCode;
   int _openShoppingCount = 0;
   StreamSubscription<List<SharedMediaFile>>? _shareSub;
+  StreamSubscription<Uri>? _linkSub;
+  final _appLinks = AppLinks();
 
   @override
   void initState() {
     super.initState();
     _bootstrap();
     _listenForShares();
+    _listenForAppLinks();
   }
 
   Future<void> _bootstrap() async {
@@ -89,6 +93,34 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       onError: (_) {},
     );
+  }
+
+  /// Für iPhone-Kurzbefehle: rezeptnachkochen://add?text=...
+  void _listenForAppLinks() {
+    _appLinks.getInitialLink().then((uri) {
+      _handleAppLink(uri);
+    }).catchError((_) {});
+
+    _linkSub = _appLinks.uriLinkStream.listen(
+      _handleAppLink,
+      onError: (_) {},
+    );
+  }
+
+  void _handleAppLink(Uri? uri) {
+    if (uri == null) return;
+    if (uri.scheme != 'rezeptnachkochen') return;
+
+    final text = uri.queryParameters['text'] ??
+        uri.queryParameters['url'] ??
+        uri.queryParameters['link'] ??
+        '';
+    if (text.trim().isEmpty) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _openAddScreen(initialSharedText: text.trim());
+    });
   }
 
   String? _sharedTextFrom(List<SharedMediaFile> files) {
@@ -177,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _shareSub?.cancel();
+    _linkSub?.cancel();
     super.dispose();
   }
 
