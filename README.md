@@ -17,6 +17,15 @@ Alle Geräte brauchen denselben **Familien-Code** und dieselbe **Cloud-Verbindun
 - **Samsung Galaxy + Tablett**: APK installieren (kein Google Store nötig)
 - **iPhone**: kostenlose **Web-App** (Safari → Zum Home-Bildschirm) – kein 99 €-Abo
 
+## Hosting (Web-App)
+
+Du brauchst **nur einen** der beiden Wege:
+
+1. **GitHub Pages** (bereits vorbereitet) – siehe `docs/IPHONE_WEB_APP.md`
+2. **Vercel** (falls du dort schon ein Konto hast) – siehe `docs/VERCEL.md`
+
+Beide sind kostenlos. Nicht beides nötig.
+
 ## iPhone ohne 99 € (empfohlen)
 
 Die App läuft auch als **Web-App** im Safari.
