@@ -4,7 +4,7 @@ Familien-App: Rezeptvideo teilen → Einkaufsliste + Schritt-für-Schritt-Anleit
 
 ## Euer Tagesablauf
 
-1. **Bernhard am iPhone**: Rezeptvideo finden → Teilen → App → Anleitung erstellen  
+1. **Bernhard am iPhone (Web-App)**: Rezeptvideo finden → Link kopieren → Web-App → Anleitung erstellen  
 2. **Zuhause am Samsung-Tablett**: Rezept öffnen → „Am Tablett nachkochen“ + Video anschauen  
 3. **Frau am Samsung Galaxy**: Einkaufsliste öffnen → im Laden abhaken, was schon im Korb ist  
 
@@ -17,19 +17,23 @@ Alle Geräte brauchen denselben **Familien-Code** und dieselbe **Cloud-Verbindun
 - **Samsung Galaxy + Tablett**: APK installieren (kein Google Store nötig)
 - **iPhone**: App einmal mit einem Mac / Flutter bauen (oder später TestFlight). Store ist optional.
 
-## iPhone / TestFlight
+## iPhone ohne 99 € (empfohlen)
 
-Vollständige Anleitung (auch für zwischendurch am Handy lesbar):
+Die App läuft auch als **Web-App** im Safari.
+
+👉 Anleitung: [`docs/IPHONE_WEB_APP.md`](docs/IPHONE_WEB_APP.md)
+
+1. Link in Safari öffnen  
+2. Teilen → **Zum Home-Bildschirm**  
+3. Rezept-Links kopieren und in der App einfügen  
+
+Kein Apple Developer Abo nötig. Galaxy/Tablett bleiben bei der Android-App, synchron über Familie/Cloud.
+
+## iPhone / TestFlight (optional, kostet)
+
+Nur falls du später doch eine echte iPhone-App willst:
 
 👉 [`docs/IPHONE_TESTFLIGHT.md`](docs/IPHONE_TESTFLIGHT.md)
-
-Kurzfassung:
-1. Apple Developer Konto anlegen
-2. App in App Store Connect anlegen
-3. Mit Mac oder Build-Dienst die iPhone-App bauen
-4. Per TestFlight aufs iPhone installieren
-
-Die Dateien für den Teilen-Button liegen schon unter `ios/Share Extension/`.
 
 ## Familie & Cloud einrichten (einmalig, kostenlos)
 

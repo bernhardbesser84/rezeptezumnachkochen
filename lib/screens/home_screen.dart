@@ -8,11 +8,13 @@ import '../models/recipe.dart';
 import '../services/app_repository.dart';
 import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
+import '../utils/platform_hints.dart';
 import 'add_recipe_screen.dart';
 import 'family_screen.dart';
 import 'recipe_detail_screen.dart';
 import 'settings_screen.dart';
 import 'shopping_list_screen.dart';
+import 'web_install_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -234,7 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openAddScreen(),
         icon: const Icon(Icons.add),
-        label: const Text('Video teilen / Link'),
+        label: Text(PlatformHints.isWeb ? 'Link einfügen' : 'Video teilen / Link'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -243,6 +245,18 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
                 children: [
+                  if (PlatformHints.isWeb) ...[
+                    _WebInstallBanner(
+                      onOpenHelp: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const WebInstallScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   _HeroBanner(onAdd: () => _openAddScreen()),
                   const SizedBox(height: 12),
                   _FamilyStatusCard(
@@ -277,6 +291,40 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+    );
+  }
+}
+
+class _WebInstallBanner extends StatelessWidget {
+  const _WebInstallBanner({required this.onOpenHelp});
+
+  final VoidCallback onOpenHelp;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'iPhone ohne App Store',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Du kannst diese Web-App dauerhaft auf den Home-Bildschirm legen – '
+              'kostenlos, ohne Apple-Abo.',
+            ),
+            const SizedBox(height: 10),
+            FilledButton.tonal(
+              onPressed: onOpenHelp,
+              child: const Text('So füge ich sie hinzu'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

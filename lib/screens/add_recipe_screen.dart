@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/app_repository.dart';
 import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
+import '../utils/platform_hints.dart';
 
 class AddRecipeScreen extends StatefulWidget {
   const AddRecipeScreen({
@@ -36,6 +38,22 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (text.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Zwischenablage ist leer.')),
+      );
+      return;
+    }
+    setState(() {
+      _controller.text = text;
+      _controller.selection = TextSelection.collapsed(offset: text.length);
+    });
   }
 
   Future<void> _createRecipe() async {
@@ -75,6 +93,8 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final webHint = PlatformHints.isWeb;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Rezept hinzufügen')),
       body: ListView(
@@ -87,20 +107,26 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: AppTheme.seed.withValues(alpha: 0.12)),
             ),
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'So geht’s ganz einfach',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                 ),
-                SizedBox(height: 8),
+                const SizedBox(height: 8),
                 Text(
-                  '1. Am iPhone ein Rezeptvideo öffnen.\n'
-                  '2. Auf Teilen tippen und „Rezept Nachkochen“ wählen '
-                  '(oder Link hier einfügen).\n'
-                  '3. Anleitung erstellen – danach erscheint das Rezept '
-                  'auch auf Tablett und Galaxy.',
+                  webHint
+                      ? 'Am iPhone:\n'
+                          '1. Rezeptvideo öffnen und den Link kopieren.\n'
+                          '2. Hier auf „Link einfügen“ tippen.\n'
+                          '3. Anleitung erstellen – danach siehst du das Rezept '
+                          'auch auf Galaxy und Tablett.'
+                      : '1. Am iPhone ein Rezeptvideo öffnen.\n'
+                          '2. Auf Teilen tippen und „Rezept Nachkochen“ wählen '
+                          '(oder Link hier einfügen).\n'
+                          '3. Anleitung erstellen – danach erscheint das Rezept '
+                          'auch auf Tablett und Galaxy.',
                 ),
               ],
             ),
@@ -116,6 +142,12 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                   'https://... oder Beschreibung aus dem Video einfügen',
               alignLabelWithHint: true,
             ),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _loading ? null : _pasteFromClipboard,
+            icon: const Icon(Icons.content_paste),
+            label: const Text('Link aus Zwischenablage einfügen'),
           ),
           const SizedBox(height: 8),
           SwitchListTile(
