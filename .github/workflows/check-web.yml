@@ -1,0 +1,34 @@
+name: Check Web Build
+
+# Baut die Web-App nur zur Prüfung.
+# Veröffentlichen macht Vercel (kein GitHub Pages nötig).
+
+on:
+  push:
+    branches:
+      - main
+      - cursor/rezept-nachkochen-app-88a8
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Build web
+        run: flutter build web --release --base-href "/"

@@ -19,12 +19,12 @@ Alle Geräte brauchen denselben **Familien-Code** und dieselbe **Cloud-Verbindun
 
 ## Hosting (Web-App)
 
-Du brauchst **nur einen** der beiden Wege:
+**Empfohlen für dich: Vercel** (kennst du schon).
 
-1. **GitHub Pages** (bereits vorbereitet) – siehe `docs/IPHONE_WEB_APP.md`
-2. **Vercel** (falls du dort schon ein Konto hast) – siehe `docs/VERCEL.md`
+👉 Kurzanleitung: [`docs/VERCEL.md`](docs/VERCEL.md)
 
-Beide sind kostenlos. Nicht beides nötig.
+GitHub Pages brauchen wir nicht – das verursachte nur die roten Fehler,
+solange Pages im Repo nicht eingeschaltet war.
 
 ## iPhone ohne 99 € (empfohlen)
 
