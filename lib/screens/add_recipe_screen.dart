@@ -395,11 +395,17 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                           '2. Caption wird oft automatisch geladen '
                           '(Button „Caption vom Link laden“).\n'
                           '3. Optional: Video-Datei anhängen.\n'
-                          '4. Anleitung erstellen — fehlende Mengen ergänzt die KI.'
+                          '4. Anleitung erstellen — fehlende Mengen ergänzt die KI.\n\n'
+                          'Tipp Facebook: Wenn die Caption leer bleibt, '
+                          'kopiere den Text unter dem Reel manuell — '
+                          'sonst rät die KI leicht daneben.'
                       : '1. Video teilen oder Link einfügen.\n'
                           '2. Caption vom Link laden (oder selbst einfügen).\n'
                           '3. Optional Video anhängen für Ton + Bild.\n'
-                          '4. Anleitung erstellen — fehlende Infos ergänzt die KI.',
+                          '4. Anleitung erstellen — fehlende Infos ergänzt die KI.\n\n'
+                          'Tipp Facebook: Wenn die Caption leer bleibt, '
+                          'kopiere den Text unter dem Reel manuell — '
+                          'sonst rät die KI leicht daneben.',
                 ),
               ],
             ),

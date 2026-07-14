@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:rezept_nachkochen/main.dart';
 import 'package:rezept_nachkochen/models/recipe.dart';
 import 'package:rezept_nachkochen/services/app_repository.dart';
@@ -124,6 +126,52 @@ Viel Erfolg!
     expect(recipe.title, 'Ofenkartoffeln');
     expect(recipe.ingredients, ['Kartoffeln']);
     expect(text.contains('überlege'), isFalse);
+  });
+
+  test('Facebook-Titel behält den Gerichtsnamen hinter |', () {
+    final extractor = RecipeExtractor();
+    final title = extractor.cleanDishTitleForTest(
+      '58.263 Aufrufe · 7.530 Reaktionen | High Protein Döner Wrap 🌯🔥 (74g Protein)',
+    );
+    expect(title.toLowerCase(), contains('döner wrap'));
+    expect(title.toLowerCase(), isNot(contains('aufrufe')));
+  });
+
+  test('HTML-Entities in Facebook-Titeln werden dekodiert', () {
+    final extractor = RecipeExtractor();
+    final decoded = extractor.decodeHtmlForTest(
+      'High Protein D&#xf6;ner Wrap',
+    );
+    expect(decoded, 'High Protein Döner Wrap');
+  });
+
+  test('Facebook-Meta liefert Döner-Wrap aus Share-Link', () async {
+    final client = MockClient((request) async {
+      expect(request.headers['User-Agent'], contains('facebookexternalhit'));
+      return http.Response(
+        '''
+<html><head>
+<meta property="og:title" content="58.263 Aufrufe · 7.530 Reaktionen | High Protein D&#xf6;ner Wrap &#x1f32f;" />
+<meta property="og:description" content="High Protein D&#xf6;ner Wrap mit Sauce" />
+<meta property="og:url" content="https://www.facebook.com/reel/3276267172553159/" />
+</head><body></body></html>
+''',
+        200,
+        headers: {'content-type': 'text/html; charset=utf-8'},
+      );
+    });
+
+    final extractor = RecipeExtractor(client: client);
+    final preview = await extractor.fetchPagePreview(
+      'https://www.facebook.com/share/r/1N5VosFAK7/',
+    );
+
+    expect(
+      extractor.cleanDishTitleForTest(preview.title).toLowerCase(),
+      contains('döner wrap'),
+    );
+    expect(preview.description.toLowerCase(), contains('döner wrap'));
+    expect(preview.url, contains('/reel/'));
   });
 
   test('Manuelles Rezept speichert Zutaten und Schritte', () {
