@@ -38,46 +38,75 @@ class RecipeExtractor {
       throw Exception('Das sieht nicht nach einem gültigen Link aus.');
     }
 
-    try {
-      final response = await _client.get(
-        uri,
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
-                  '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-          'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
-        },
-      ).timeout(const Duration(seconds: 15));
+    final host = uri.host.replaceFirst('www.', '').toLowerCase();
+    final isFacebook =
+        host.contains('facebook.com') || host == 'fb.watch' || host == 'fb.com';
 
-      if (response.statusCode < 200 || response.statusCode >= 400) {
+    // Facebook liefert Meta-Daten oft nur an Crawler-User-Agents.
+    final userAgents = <String>[
+      if (isFacebook)
+        'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+      'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
+          '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    ];
+
+    for (final userAgent in userAgents) {
+      try {
+        final response = await _client
+            .get(
+              uri,
+              headers: {
+                'User-Agent': userAgent,
+                'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml',
+              },
+            )
+            .timeout(const Duration(seconds: 18));
+
+        if (response.statusCode < 200 || response.statusCode >= 400) {
+          continue;
+        }
+
+        final html = response.body;
+        if (html.contains('Error Facebook') &&
+            !html.contains('og:title')) {
+          continue;
+        }
+
+        final title = _firstNonEmpty([
+          _metaContent(html, 'og:title'),
+          _metaName(html, 'title'),
+          _tagText(html, 'title'),
+        ]);
+        final description = _firstNonEmpty([
+          _metaContent(html, 'og:description'),
+          _metaName(html, 'description'),
+          _metaName(html, 'twitter:description'),
+        ]);
+        final canonical = _firstNonEmpty([
+          _metaContent(html, 'og:url'),
+          url,
+        ]);
+
+        if (title.isEmpty && description.isEmpty) continue;
+
         return PagePreview(
-          url: url,
-          title: _guessTitleFromUrl(url),
-          description: '',
+          url: canonical.isNotEmpty ? canonical : url,
+          title: title,
+          description: description,
         );
+      } catch (_) {
+        // Nächsten User-Agent versuchen.
       }
-
-      final html = response.body;
-      final title = _firstNonEmpty([
-        _metaContent(html, 'og:title'),
-        _metaName(html, 'title'),
-        _tagText(html, 'title'),
-        _guessTitleFromUrl(url),
-      ]);
-      final description = _firstNonEmpty([
-        _metaContent(html, 'og:description'),
-        _metaName(html, 'description'),
-        _metaName(html, 'twitter:description'),
-      ]);
-
-      return PagePreview(url: url, title: title, description: description);
-    } catch (_) {
-      return PagePreview(
-        url: url,
-        title: _guessTitleFromUrl(url),
-        description: '',
-      );
     }
+
+    return PagePreview(
+      url: url,
+      title: _guessTitleFromUrl(url),
+      description: '',
+    );
   }
 
   /// Erstellt ein Rezept aus Link, Caption-Text, optional Video/Ton.
@@ -116,6 +145,21 @@ class RecipeExtractor {
 
     if (url.isNotEmpty) {
       preview = await fetchPagePreview(url);
+      // Facebook liefert oft den Reel-Canonical in og:url — den bevorzugen.
+      if (preview.url.isNotEmpty && preview.url != url) {
+        url = preview.url;
+      }
+    }
+
+    // Wenn niemand Caption eingefügt hat: Meta-Beschreibung vom Link nutzen.
+    var effectiveCaption = caption;
+    if (effectiveCaption.isEmpty && preview.description.trim().isNotEmpty) {
+      effectiveCaption = preview.description.trim();
+    }
+    if (effectiveCaption.isEmpty &&
+        preview.title.trim().isNotEmpty &&
+        !_isUselessDishTitle(_cleanTitle(_stripPlatformSuffix(preview.title)))) {
+      effectiveCaption = preview.title.trim();
     }
 
     // YouTube: Untertitel / Transkript vom Ton laden.
@@ -146,14 +190,14 @@ class RecipeExtractor {
       preview: preview,
       url: url,
       pastedText: trimmed,
-      caption: caption,
+      caption: effectiveCaption,
       youtubeTranscript: autoTranscript,
       whisperTranscript: whisperTranscript,
     );
 
     final dishTitle = _bestDishTitle(
       pageTitle: preview.title,
-      caption: caption,
+      caption: effectiveCaption,
       pastedText: trimmed,
       youtubeTranscript: autoTranscript,
       whisperTranscript: whisperTranscript,
@@ -163,16 +207,25 @@ class RecipeExtractor {
       'Aufgabe: Erstelle ein vollständiges, nachkochbares Rezept.',
       'Nutze ALLE folgenden Quellen gemeinsam (Video-Beschreibung, '
           'Untertitel/Ton, Link-Infos).',
-      'Wenn Angaben fehlen (Mengen, Zeiten, Zwischenschritte): '
-          'sinnvoll ergänzen und in notes kurz vermerken, was geschätzt wurde.',
+      'WICHTIG: Erfinde KEIN anderes Gericht. Wenn Quellen einen '
+          'Gerichtsnamen nennen (z. B. „High Protein Döner Wrap“), '
+          'muss title genau dazu passen.',
+      'Erfinde KEIN „klassisches Ersatzrezept“ (z. B. Frikadellen, '
+          'irgendetwas Beliebtes), nur weil Details fehlen.',
+      'Fehlen Mengen/Zeiten/Schritte zum genannten Gericht: typische '
+          'Zubereitung genau für DIESES Gericht ergänzen und in notes '
+          'kurz vermerken, was geschätzt wurde.',
+      'Steht in den Quellen wirklich gar kein Gericht: dann title '
+          '„Rezept ergänzen“, kurze Platzhalter-Zutaten/Schritte und in '
+          'notes bitten, Caption oder Video nachzutragen.',
       'Widersprüche: der klarere/aktuellere Hinweis gewinnt '
           '(meist gesprochener Text + Caption).',
-      'WICHTIG für title: Vergib einen klaren deutschen Gerichtsnamen '
-          '(z. B. „Cremige Tomaten-Pasta“). '
+      'WICHTIG für title: klarer deutscher Gerichtsname. '
           'Niemals Plattformnamen wie Facebook, Instagram, TikTok oder '
-          '„Rezept von …“ als Titel verwenden.',
+          '„Rezept von …“ als Titel.',
       if (dishTitle != 'Neues Rezept')
-        'Vorschlag für den Titel (nur wenn passend): $dishTitle',
+        'Der Gerichtsname aus den Quellen lautet: „$dishTitle“. '
+            'Nutze diesen Namen (oder eine klare deutsche Variante davon).',
       '',
       sources,
     ].join('\n');
@@ -494,14 +547,15 @@ class RecipeExtractor {
       'ingredients (string[]), steps (string[]), '
       'notes (string|null). '
       'Sprache: Deutsch. '
-      'title MUSS ein echter Gerichtsname sein '
-      '(z. B. „Knoblauch-Garnelen“, „Ofengemüse mit Feta“). '
-      'Niemals „Facebook“, „Instagram“, „TikTok“, „YouTube“ oder '
-      '„Rezept von …“ als title. '
-      'Nutze Caption-Text, Transkript/Untertitel und Link-Infos gemeinsam. '
-      'Fehlende Mengen, Zeiten und Schritte sinnvoll ergänzen '
-      '(typische Hausmannskost-Annahmen). '
-      'In notes kurz schreiben, was ergänzt/geschätzt wurde. '
+      'title MUSS dem Gericht aus den Quellen entsprechen '
+      '(z. B. „High Protein Döner Wrap“, „Knoblauch-Garnelen“). '
+      'Niemals Facebook/Instagram/TikTok/YouTube oder „Rezept von …“ '
+      'als title. '
+      'Niemals ein anderes klassisches Rezept erfinden, nur weil der '
+      'Link wenig Text enthält. '
+      'Nutze Caption, Transkript und Meta-Text gemeinsam. '
+      'Fehlende Mengen/Zeiten/Schritte nur für das genannte Gericht '
+      'sinnvoll ergänzen und in notes als Schätzung markieren. '
       'Schreibe klare, kurze Kochschritte.';
 
   Future<Recipe> _extractWithAi({
@@ -844,6 +898,14 @@ class RecipeExtractor {
   String readGeminiAnswerText(Map<String, dynamic> body) {
     return _geminiAnswerText(body);
   }
+
+  @visibleForTesting
+  String cleanDishTitleForTest(String title) {
+    return _cleanTitle(_stripPlatformSuffix(title));
+  }
+
+  @visibleForTesting
+  String decodeHtmlForTest(String value) => _decodeHtml(value);
 
   Recipe _recipeFromAiJson(String raw, String sourceUrl) {
     final parsed = _decodeAiJsonObject(raw);
@@ -1223,10 +1285,31 @@ class RecipeExtractor {
   }
 
   String _cleanTitle(String title) {
-    return title
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .replaceAll(RegExp(r'\|.*$'), '')
-        .trim();
+    var t = title.replaceAll(RegExp(r'[\n\r]+'), '\n').trim();
+    // Erste Zeile: Facebook packt oft Caption-Fortsetzung in og:title.
+    t = t.split('\n').first.trim();
+    t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    final parts = t
+        .split('|')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.length >= 2) {
+      final left = parts.first.toLowerCase();
+      final right = parts.last.toLowerCase();
+      // „12.345 Aufrufe · … | High Protein Döner Wrap“ → Teil rechts
+      if (RegExp(
+        r'(aufrufe|views|reaktionen|reactions|likes|kommentare|comments|shares)',
+      ).hasMatch(left)) {
+        t = parts.sublist(1).join(' | ').trim();
+      } else if (RegExp(
+        r'^(facebook|instagram|tiktok|youtube|watch)$',
+      ).hasMatch(right)) {
+        t = parts.sublist(0, parts.length - 1).join(' | ').trim();
+      }
+    }
+    return t.trim();
   }
 
   bool _looksLikeIngredient(String line) {
@@ -1312,6 +1395,11 @@ class RecipeExtractor {
         .replaceAll('&#39;', "'")
         .replaceAll('&lt;', '<')
         .replaceAll('&gt;', '>')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (m) {
+          final code = int.tryParse(m.group(1)!, radix: 16);
+          return code == null ? m.group(0)! : String.fromCharCode(code);
+        })
         .replaceAllMapped(RegExp(r'&#(\d+);'), (m) {
           final code = int.tryParse(m.group(1)!);
           return code == null ? m.group(0)! : String.fromCharCode(code);

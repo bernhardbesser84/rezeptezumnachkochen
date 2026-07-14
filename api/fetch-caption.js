@@ -54,6 +54,14 @@ async function fetchCaption(url) {
     if (ig.caption) return ig;
   }
 
+  if (
+    host.includes('facebook.com') ||
+    host === 'fb.watch' ||
+    host === 'fb.com'
+  ) {
+    return fetchFacebook(url);
+  }
+
   return fetchGenericOg(url);
 }
 
@@ -65,23 +73,69 @@ function safeHost(url) {
   }
 }
 
-async function fetchHtml(url) {
+const UA_FACEBOOK =
+  'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
+const UA_MOBILE =
+  'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
+  + '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+
+async function fetchHtml(url, userAgent = UA_MOBILE) {
   const response = await fetch(url, {
     headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
-        + '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+      'User-Agent': userAgent,
       'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
       Accept: 'text/html,application/xhtml+xml',
     },
     redirect: 'follow',
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.text();
+  return { html: await response.text(), finalUrl: response.url || url };
+}
+
+async function fetchFacebook(url) {
+  // Facebook liefert og:title/description zuverlässig an Crawler-UAs.
+  const agents = [UA_FACEBOOK, UA_MOBILE];
+  for (const agent of agents) {
+    try {
+      const { html, finalUrl } = await fetchHtml(url, agent);
+      if (html.includes('Error Facebook') && !html.includes('og:title')) {
+        continue;
+      }
+      const title = cleanDishTitle(
+        decodeEntities(meta(html, 'og:title') || tagText(html, 'title') || ''),
+      );
+      let caption = decodeEntities(
+        meta(html, 'og:description') ||
+          metaName(html, 'description') ||
+          metaName(html, 'twitter:description') ||
+          '',
+      ).trim();
+      if (!caption && title) caption = title;
+      const ogUrl = decodeEntities(meta(html, 'og:url') || '').trim();
+      if (caption || title) {
+        return {
+          title,
+          caption,
+          source: caption ? 'facebook-og' : 'none',
+          canonicalUrl: ogUrl || finalUrl || url,
+        };
+      }
+    } catch (_) {
+      // Nächsten UA versuchen.
+    }
+  }
+  return {
+    title: '',
+    caption: '',
+    source: 'none',
+    warning:
+      'Facebook hat keinen Beschreibungstext geliefert. '
+      + 'Bitte den Text unter dem Video manuell kopieren.',
+  };
 }
 
 async function fetchYoutube(url) {
-  const html = await fetchHtml(url);
+  const { html } = await fetchHtml(url);
   const title = meta(html, 'og:title') || tagText(html, 'title') || '';
   let caption =
     shortDescriptionFromPlayer(html) ||
@@ -127,7 +181,6 @@ async function fetchTikTokOEmbed(url) {
 }
 
 async function fetchInstagramOEmbed(url) {
-  // Öffentliches oEmbed — oft eingeschränkt, aber einen Versuch wert.
   const endpoint =
     `https://www.instagram.com/api/v1/oembed/?url=${encodeURIComponent(url)}`;
   try {
@@ -149,7 +202,7 @@ async function fetchInstagramOEmbed(url) {
 
 async function fetchGenericOg(url) {
   try {
-    const html = await fetchHtml(url);
+    const { html } = await fetchHtml(url);
     const title = meta(html, 'og:title') || tagText(html, 'title') || '';
     const caption =
       meta(html, 'og:description') ||
@@ -164,6 +217,23 @@ async function fetchGenericOg(url) {
   } catch (_) {
     return { title: '', caption: '', source: 'none' };
   }
+}
+
+/** „12 Aufrufe | High Protein Döner Wrap“ → Gerichtsname. */
+function cleanDishTitle(raw) {
+  let t = (raw || '').replace(/[\n\r]+/g, '\n').trim();
+  t = t.split('\n')[0].trim().replace(/\s+/g, ' ');
+  const parts = t.split('|').map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    const left = parts[0].toLowerCase();
+    const right = parts[parts.length - 1].toLowerCase();
+    if (/(aufrufe|views|reaktionen|reactions|likes|kommentare|comments|shares)/.test(left)) {
+      t = parts.slice(1).join(' | ').trim();
+    } else if (/^(facebook|instagram|tiktok|youtube|watch)$/.test(right)) {
+      t = parts.slice(0, -1).join(' | ').trim();
+    }
+  }
+  return t;
 }
 
 function meta(html, property) {
@@ -209,5 +279,19 @@ function decodeEntities(value) {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&#x27;/g, "'")
-    .replace(/&nbsp;/g, ' ');
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
+      try {
+        return String.fromCodePoint(parseInt(hex, 16));
+      } catch (_) {
+        return _;
+      }
+    })
+    .replace(/&#(\d+);/g, (_, num) => {
+      try {
+        return String.fromCodePoint(parseInt(num, 10));
+      } catch (_) {
+        return _;
+      }
+    });
 }
