@@ -3,14 +3,21 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/ai_provider.dart';
 import '../services/app_repository.dart';
+import '../services/google_backup_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/clipboard_paste.dart';
 import 'family_screen.dart';
+import 'google_backup_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.repository});
+  const SettingsScreen({
+    super.key,
+    required this.repository,
+    this.googleBackup,
+  });
 
   final AppRepository repository;
+  final GoogleBackupService? googleBackup;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -76,6 +83,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     await widget.repository.storage.setAiProvider(_provider);
     await widget.repository.storage.setApiKeyFor(_provider, _controller.text);
+    try {
+      await widget.googleBackup?.backupIfSignedIn();
+    } catch (_) {}
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -123,6 +133,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                 ),
+                if (widget.googleBackup != null)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.backup_outlined),
+                    title: const Text('Google-Backup'),
+                    subtitle: const Text(
+                      'Anmelden und Rezepte + Einstellungen sichern',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => GoogleBackupScreen(
+                            repository: widget.repository,
+                            backup: widget.googleBackup!,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 const Divider(height: 32),
                 const Text(
                   'KI-Anbieter (optional)',
