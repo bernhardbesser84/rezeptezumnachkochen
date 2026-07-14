@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_repository.dart';
 import '../theme/app_theme.dart';
+import '../utils/clipboard_paste.dart';
 import 'family_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -34,25 +34,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _pasteKey() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text?.trim() ?? '';
-    if (text.isEmpty) {
-      if (!mounted) return;
+    final result = await readClipboardText();
+    if (!mounted) return;
+    if (!result.isOk) {
+      _focusNode.requestFocus();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Zwischenablage ist leer. Bitte den Schlüssel zuerst kopieren.',
-          ),
-        ),
+        SnackBar(content: Text(result.errorMessage!)),
       );
       return;
     }
+    final text = result.text!;
     setState(() {
       _controller.text = text;
       _controller.selection = TextSelection.collapsed(offset: text.length);
     });
     _focusNode.requestFocus();
-    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Schlüssel eingefügt.')),
     );

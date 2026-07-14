@@ -5,6 +5,7 @@ import '../models/family_config.dart';
 import '../services/app_repository.dart';
 import '../services/family_sync_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/clipboard_paste.dart';
 
 class FamilyScreen extends StatefulWidget {
   const FamilyScreen({super.key, required this.repository});
@@ -45,22 +46,19 @@ class _FamilyScreenState extends State<FamilyScreen> {
   }
 
   Future<void> _pasteInto(TextEditingController controller, String label) async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text?.trim() ?? '';
-    if (text.isEmpty) {
-      if (!mounted) return;
+    final result = await readClipboardText();
+    if (!mounted) return;
+    if (!result.isOk) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Zwischenablage ist leer. Bitte zuerst kopieren.'),
-        ),
+        SnackBar(content: Text(result.errorMessage!)),
       );
       return;
     }
+    final text = result.text!;
     setState(() {
       controller.text = text;
       controller.selection = TextSelection.collapsed(offset: text.length);
     });
-    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('$label eingefügt.')),
     );
