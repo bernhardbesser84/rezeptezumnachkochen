@@ -63,6 +63,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     });
 
     try {
+      final provider = await widget.repository.storage.getAiProvider();
       final apiKey = await widget.repository.storage.getApiKey();
       final text = _controller.text.trim();
       final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(text);
@@ -72,6 +73,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         sourceText: text,
         sourceUrl: url,
         apiKey: apiKey,
+        provider: provider,
       );
 
       await widget.repository.saveRecipe(recipe);
@@ -182,8 +184,8 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Tipp: Mit OpenAI-Schlüssel unter Einstellungen werden Zutaten '
-            'und Schritte deutlich besser.',
+            'Tipp: Mit KI-Schlüssel (OpenAI, Gemini oder Claude) unter '
+            'Einstellungen werden Zutaten und Schritte deutlich besser.',
           ),
         ],
       ),

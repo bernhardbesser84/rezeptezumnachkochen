@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
+import '../models/ai_provider.dart';
 import '../models/recipe.dart';
 
 class PagePreview {
@@ -78,6 +79,7 @@ class RecipeExtractor {
     required String sourceText,
     String? sourceUrl,
     String? apiKey,
+    AiProvider provider = AiProvider.openai,
   }) async {
     final trimmed = sourceText.trim();
     if (trimmed.isEmpty && (sourceUrl == null || sourceUrl.trim().isEmpty)) {
@@ -107,7 +109,8 @@ class RecipeExtractor {
     ].join('\n');
 
     if (apiKey != null && apiKey.trim().isNotEmpty) {
-      return _extractWithOpenAi(
+      return _extractWithAi(
+        provider: provider,
         combinedText: combined,
         sourceUrl: url,
         apiKey: apiKey.trim(),
@@ -119,6 +122,48 @@ class RecipeExtractor {
       titleHint: preview.title,
       sourceUrl: url,
     );
+  }
+
+  static const _systemPrompt =
+      'Du hilfst beim Nachkochen von Rezeptvideos. '
+      'Antworte NUR als JSON mit den Feldern: '
+      'title (string), servings (string|null), '
+      'prepTimeMinutes (number|null), '
+      'ingredients (string[]), steps (string[]), '
+      'notes (string|null). '
+      'Sprache: Deutsch. '
+      'Schätze fehlende Mengen sinnvoll. '
+      'Schreibe klare, kurze Kochschritte.';
+
+  Future<Recipe> _extractWithAi({
+    required AiProvider provider,
+    required String combinedText,
+    required String sourceUrl,
+    required String apiKey,
+  }) async {
+    final userPrompt =
+        'Erstelle daraus ein nachkochbares Rezept:\n$combinedText';
+
+    switch (provider) {
+      case AiProvider.openai:
+        return _extractWithOpenAi(
+          combinedText: userPrompt,
+          sourceUrl: sourceUrl,
+          apiKey: apiKey,
+        );
+      case AiProvider.gemini:
+        return _extractWithGemini(
+          combinedText: userPrompt,
+          sourceUrl: sourceUrl,
+          apiKey: apiKey,
+        );
+      case AiProvider.claude:
+        return _extractWithClaude(
+          combinedText: userPrompt,
+          sourceUrl: sourceUrl,
+          apiKey: apiKey,
+        );
+    }
   }
 
   Future<Recipe> _extractWithOpenAi({
@@ -138,37 +183,140 @@ class RecipeExtractor {
             'temperature': 0.2,
             'response_format': {'type': 'json_object'},
             'messages': [
-              {
-                'role': 'system',
-                'content':
-                    'Du hilfst beim Nachkochen von Rezeptvideos. '
-                    'Antworte NUR als JSON mit den Feldern: '
-                    'title (string), servings (string|null), '
-                    'prepTimeMinutes (number|null), '
-                    'ingredients (string[]), steps (string[]), '
-                    'notes (string|null). '
-                    'Sprache: Deutsch. '
-                    'Schätze fehlende Mengen sinnvoll. '
-                    'Schreibe klare, kurze Kochschritte.',
-              },
-              {
-                'role': 'user',
-                'content':
-                    'Erstelle daraus ein nachkochbares Rezept:\n$combinedText',
-              },
+              {'role': 'system', 'content': _systemPrompt},
+              {'role': 'user', 'content': combinedText},
             ],
           }),
         )
         .timeout(const Duration(seconds: 45));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(_openAiErrorMessage(response.statusCode, response.body));
+      throw Exception(
+        _aiErrorMessage(AiProvider.openai, response.statusCode, response.body),
+      );
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     final content =
         (body['choices'] as List).first['message']['content'] as String;
-    final parsed = jsonDecode(content) as Map<String, dynamic>;
+    return _recipeFromAiJson(content, sourceUrl);
+  }
+
+  Future<Recipe> _extractWithGemini({
+    required String combinedText,
+    required String sourceUrl,
+    required String apiKey,
+  }) async {
+    final uri = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/'
+      'gemini-3.5-flash:generateContent',
+    );
+    final response = await _client
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: jsonEncode({
+            'systemInstruction': {
+              'parts': [
+                {'text': _systemPrompt},
+              ],
+            },
+            'contents': [
+              {
+                'role': 'user',
+                'parts': [
+                  {'text': combinedText},
+                ],
+              },
+            ],
+            'generationConfig': {
+              'temperature': 0.2,
+              'responseMimeType': 'application/json',
+            },
+          }),
+        )
+        .timeout(const Duration(seconds: 45));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        _aiErrorMessage(AiProvider.gemini, response.statusCode, response.body),
+      );
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final candidates = body['candidates'] as List?;
+    if (candidates == null || candidates.isEmpty) {
+      throw Exception('Gemini hat keine Antwort geliefert. Bitte erneut versuchen.');
+    }
+    final parts =
+        (candidates.first as Map<String, dynamic>)['content']?['parts'] as List?;
+    final text = parts
+            ?.map((p) => (p as Map<String, dynamic>)['text']?.toString() ?? '')
+            .join()
+            .trim() ??
+        '';
+    if (text.isEmpty) {
+      throw Exception('Gemini-Antwort war leer. Bitte erneut versuchen.');
+    }
+    return _recipeFromAiJson(text, sourceUrl);
+  }
+
+  Future<Recipe> _extractWithClaude({
+    required String combinedText,
+    required String sourceUrl,
+    required String apiKey,
+  }) async {
+    final response = await _client
+        .post(
+          Uri.parse('https://api.anthropic.com/v1/messages'),
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': 'claude-haiku-4-5',
+            'max_tokens': 2048,
+            'temperature': 0.2,
+            'system': _systemPrompt,
+            'messages': [
+              {'role': 'user', 'content': combinedText},
+            ],
+          }),
+        )
+        .timeout(const Duration(seconds: 45));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        _aiErrorMessage(AiProvider.claude, response.statusCode, response.body),
+      );
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final content = body['content'] as List?;
+    if (content == null || content.isEmpty) {
+      throw Exception('Claude hat keine Antwort geliefert. Bitte erneut versuchen.');
+    }
+    final text = content
+        .whereType<Map>()
+        .map((part) => part['text']?.toString() ?? '')
+        .join()
+        .trim();
+    if (text.isEmpty) {
+      throw Exception('Claude-Antwort war leer. Bitte erneut versuchen.');
+    }
+    return _recipeFromAiJson(text, sourceUrl);
+  }
+
+  Recipe _recipeFromAiJson(String raw, String sourceUrl) {
+    final cleaned = raw
+        .trim()
+        .replaceFirst(RegExp(r'^```(?:json)?\s*', caseSensitive: false), '')
+        .replaceFirst(RegExp(r'\s*```$'), '');
+    final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
 
     return Recipe(
       id: _uuid.v4(),
@@ -246,7 +394,7 @@ class RecipeExtractor {
           ? [
               'Zutaten waren im Video-Text nicht klar erkennbar.',
               'Tipp: Füge den Rezepttext aus dem Video ein oder hinterlege '
-                  'einen OpenAI-Schlüssel in den Einstellungen.',
+                  'einen KI-Schlüssel (OpenAI, Gemini oder Claude) in den Einstellungen.',
             ]
           : ingredients,
       steps: steps.isEmpty
@@ -260,7 +408,8 @@ class RecipeExtractor {
       createdAt: DateTime.now(),
       notes:
           'Erstellt ohne KI-Schlüssel (lokale Auswertung). Für bessere '
-          'Ergebnisse hinterlege unter Einstellungen einen OpenAI API-Schlüssel.',
+          'Ergebnisse hinterlege unter Einstellungen einen KI-Schlüssel '
+          '(OpenAI, Gemini oder Claude).',
     );
   }
 
@@ -289,7 +438,8 @@ class RecipeExtractor {
       notes:
           'Platzhalter-Rezept: Viele Social-Media-Seiten liefern wenig Text. '
           'Am besten den Beschreibungstext aus dem Video einfügen oder einen '
-          'OpenAI API-Schlüssel in den Einstellungen hinterlegen.',
+          'KI-Schlüssel (OpenAI, Gemini oder Claude) in den Einstellungen '
+          'hinterlegen.',
     );
   }
 
@@ -322,40 +472,44 @@ class RecipeExtractor {
     );
   }
 
-  /// Verständliche Meldung für OpenAI-Fehlercodes.
-  String _openAiErrorMessage(int statusCode, String body) {
+  /// Verständliche Meldung für KI-API-Fehlercodes.
+  String _aiErrorMessage(AiProvider provider, int statusCode, String body) {
+    final name = provider.label;
     final lower = body.toLowerCase();
     final quotaEmpty = lower.contains('insufficient_quota') ||
         lower.contains('billing') ||
-        lower.contains('exceeded your current quota');
-    final rateLimited = lower.contains('rate_limit');
+        lower.contains('exceeded your current quota') ||
+        lower.contains('credit') ||
+        lower.contains('resource_exhausted');
+    final rateLimited = lower.contains('rate_limit') ||
+        lower.contains('rate limit') ||
+        lower.contains('too many');
 
     switch (statusCode) {
       case 401:
       case 403:
-        return 'API-Schlüssel ungültig oder ohne Berechtigung. '
+        return '$name-Schlüssel ungültig oder ohne Berechtigung. '
             'Bitte unter Einstellungen prüfen und neu speichern.';
       case 429:
         if (quotaEmpty) {
-          return 'OpenAI-Guthaben / Kontingent ist leer (429). '
-              'Unter platform.openai.com Guthaben aufladen '
-              'oder Usage-Limits prüfen — der Schlüssel selbst kann stimmen.';
+          return '$name-Guthaben / Kontingent ist leer (429). '
+              'Im $name-Konto Guthaben bzw. Limits prüfen — '
+              'der Schlüssel selbst kann stimmen.';
         }
         if (rateLimited) {
-          return 'Zu viele Anfragen bei OpenAI (429). '
+          return 'Zu viele Anfragen bei $name (429). '
               'Bitte 1–2 Minuten warten und erneut versuchen.';
         }
-        return 'OpenAI meldet Limit erreicht (429). '
+        return '$name meldet Limit erreicht (429). '
             'Meist: Guthaben leer oder zu viele Anfragen. '
-            'Prüfe unter platform.openai.com Billing & Usage — '
-            'nicht zwingend der API-Schlüssel.';
+            'Nicht zwingend der API-Schlüssel.';
       case 500:
       case 502:
       case 503:
-        return 'OpenAI ist gerade gestört ($statusCode). '
+        return '$name ist gerade gestört ($statusCode). '
             'Bitte später nochmal versuchen.';
       default:
-        return 'KI-Anfrage fehlgeschlagen ($statusCode). '
+        return 'KI-Anfrage bei $name fehlgeschlagen ($statusCode). '
             'Falls der Schlüssel neu ist: unter Einstellungen prüfen. '
             'Sonst später erneut versuchen.';
     }

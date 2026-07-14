@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/ai_provider.dart';
 import '../models/family_config.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
@@ -13,6 +14,7 @@ class RecipeStorage {
   static const _shoppingKey = 'shopping_items';
   static const _familyKey = 'family_config';
   static const _seededKey = 'demo_seeded';
+  static const _aiProviderKey = 'ai_provider';
 
   final _uuid = const Uuid();
 
@@ -147,31 +149,58 @@ class RecipeStorage {
     return 'KOCH-$part';
   }
 
-  Future<String?> getApiKey() async {
-    final family = await loadFamilyConfig();
-    if (family?.openaiApiKey != null &&
-        family!.openaiApiKey!.trim().isNotEmpty) {
-      return family.openaiApiKey;
-    }
-    // Fallback altes Settings-Feld
+  Future<AiProvider> getAiProvider() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('openai_api_key');
+    return AiProvider.fromStorage(prefs.getString(_aiProviderKey));
+  }
+
+  Future<void> setAiProvider(AiProvider provider) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_aiProviderKey, provider.storageValue);
+  }
+
+  /// Aktiver Schlüssel für den gewählten Anbieter.
+  Future<String?> getApiKey() async {
+    final provider = await getAiProvider();
+    return getApiKeyFor(provider);
+  }
+
+  Future<String?> getApiKeyFor(AiProvider provider) async {
+    if (provider == AiProvider.openai) {
+      final family = await loadFamilyConfig();
+      if (family?.openaiApiKey != null &&
+          family!.openaiApiKey!.trim().isNotEmpty) {
+        return family.openaiApiKey;
+      }
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(provider.storageKey);
   }
 
   Future<void> setApiKey(String? key) async {
-    final family = await loadFamilyConfig() ??
-        FamilyConfig(familyCode: generateFamilyCode(), deviceName: 'Gerät');
-    await saveFamilyConfig(
-      family.copyWith(
-        openaiApiKey: key,
-        clearOpenaiApiKey: key == null || key.trim().isEmpty,
-      ),
-    );
+    final provider = await getAiProvider();
+    await setApiKeyFor(provider, key);
+  }
+
+  Future<void> setApiKeyFor(AiProvider provider, String? key) async {
     final prefs = await SharedPreferences.getInstance();
-    if (key == null || key.trim().isEmpty) {
-      await prefs.remove('openai_api_key');
+    final trimmed = key?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      await prefs.remove(provider.storageKey);
     } else {
-      await prefs.setString('openai_api_key', key.trim());
+      await prefs.setString(provider.storageKey, trimmed);
+    }
+
+    // OpenAI-Schlüssel auch in der Familien-Config halten (wie bisher).
+    if (provider == AiProvider.openai) {
+      final family = await loadFamilyConfig() ??
+          FamilyConfig(familyCode: generateFamilyCode(), deviceName: 'Gerät');
+      await saveFamilyConfig(
+        family.copyWith(
+          openaiApiKey: trimmed.isEmpty ? null : trimmed,
+          clearOpenaiApiKey: trimmed.isEmpty,
+        ),
+      );
     }
   }
 
