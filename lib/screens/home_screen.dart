@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:app_links/app_links.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../models/recipe.dart';
@@ -72,29 +74,73 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _listenForShares() {
     ReceiveSharingIntent.instance.getInitialMedia().then((files) {
-      final text = _sharedTextFrom(files);
-      if (text != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _openAddScreen(initialSharedText: text);
-        });
-        ReceiveSharingIntent.instance.reset();
-      }
+      _handleSharedFiles(files);
+      ReceiveSharingIntent.instance.reset();
     }).catchError((_) {});
 
     _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen(
       (files) {
-        final text = _sharedTextFrom(files);
-        if (text != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            _openAddScreen(initialSharedText: text);
-          });
-          ReceiveSharingIntent.instance.reset();
-        }
+        _handleSharedFiles(files);
+        ReceiveSharingIntent.instance.reset();
       },
       onError: (_) {},
     );
+  }
+
+  Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
+    if (files.isEmpty) return;
+
+    String? text;
+    Uint8List? videoBytes;
+    String? videoMime;
+    String? videoName;
+
+    final textParts = <String>[];
+    for (final file in files) {
+      final path = file.path.trim();
+      if (path.isEmpty) continue;
+
+      final isVideo = file.type == SharedMediaType.video ||
+          path.toLowerCase().endsWith('.mp4') ||
+          path.toLowerCase().endsWith('.mov') ||
+          path.toLowerCase().endsWith('.m4v') ||
+          path.toLowerCase().endsWith('.webm');
+
+      if (isVideo && !kIsWeb) {
+        try {
+          final data = await XFile(path).readAsBytes();
+          if (data.isNotEmpty && data.length < 18 * 1024 * 1024) {
+            videoBytes = data;
+            videoMime = path.toLowerCase().endsWith('.webm')
+                ? 'video/webm'
+                : path.toLowerCase().endsWith('.mov')
+                    ? 'video/quicktime'
+                    : 'video/mp4';
+            videoName = path.split('/').last;
+          }
+        } catch (_) {}
+      } else if (file.type == SharedMediaType.text ||
+          path.startsWith('http') ||
+          !isVideo) {
+        textParts.add(path);
+      }
+    }
+
+    if (textParts.isNotEmpty) {
+      text = textParts.join('\n');
+    }
+
+    if (text == null && videoBytes == null) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _openAddScreen(
+        initialSharedText: text,
+        initialVideoBytes: videoBytes,
+        initialVideoMimeType: videoMime,
+        initialVideoName: videoName,
+      );
+    });
   }
 
   /// Für iPhone-Kurzbefehle: rezeptnachkochen://add?text=...
@@ -125,16 +171,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  String? _sharedTextFrom(List<SharedMediaFile> files) {
-    if (files.isEmpty) return null;
-    final parts = files
-        .map((f) => f.path.trim())
-        .where((p) => p.isNotEmpty)
-        .toList();
-    if (parts.isEmpty) return null;
-    return parts.join('\n');
-  }
-
   Future<void> _reload() async {
     final recipes = await widget.repository.loadRecipes(pullRemote: true);
     final family = await widget.repository.family();
@@ -149,13 +185,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _openAddScreen({String? initialSharedText}) async {
+  Future<void> _openAddScreen({
+    String? initialSharedText,
+    Uint8List? initialVideoBytes,
+    String? initialVideoMimeType,
+    String? initialVideoName,
+  }) async {
     final recipe = await Navigator.of(context).push<Recipe>(
       MaterialPageRoute(
         builder: (_) => AddRecipeScreen(
           repository: widget.repository,
           extractor: widget.extractor,
           initialSharedText: initialSharedText,
+          initialVideoBytes: initialVideoBytes,
+          initialVideoMimeType: initialVideoMimeType,
+          initialVideoName: initialVideoName,
         ),
       ),
     );

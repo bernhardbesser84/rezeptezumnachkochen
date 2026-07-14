@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/ai_provider.dart';
 import '../models/recipe.dart';
+import 'media_transcript.dart';
 
 class PagePreview {
   PagePreview({
@@ -20,9 +21,14 @@ class PagePreview {
 }
 
 class RecipeExtractor {
-  RecipeExtractor({http.Client? client}) : _client = client ?? http.Client();
+  RecipeExtractor({
+    http.Client? client,
+    MediaTranscriptService? transcripts,
+  })  : _client = client ?? http.Client(),
+        _transcripts = transcripts ?? MediaTranscriptService(client: client);
 
   final http.Client _client;
+  final MediaTranscriptService _transcripts;
   final _uuid = const Uuid();
 
   /// Zieht Titel und Beschreibung aus einem Link (z. B. Facebook/Instagram).
@@ -74,44 +80,91 @@ class RecipeExtractor {
     }
   }
 
-  /// Erstellt ein Rezept aus Link + optionalem Freitext.
-  /// Mit API-Schlüssel: bessere KI-Auswertung. Ohne / bei Fehler: lokal.
+  /// Erstellt ein Rezept aus Link, Caption-Text, optional Video/Ton.
+  /// Mit API-Schlüssel: KI nutzt alle Quellen und ergänzt fehlende Infos.
   Future<Recipe> extractRecipe({
     required String sourceText,
     String? sourceUrl,
+    String? captionText,
     String? apiKey,
     AiProvider provider = AiProvider.openai,
     bool useAi = true,
+    Uint8List? videoBytes,
+    String? videoMimeType,
+    String? videoFileName,
   }) async {
     final trimmed = sourceText.trim();
-    if (trimmed.isEmpty && (sourceUrl == null || sourceUrl.trim().isEmpty)) {
-      throw Exception('Bitte einen Link, Text oder ein Foto hinzufügen.');
+    final caption = (captionText ?? '').trim();
+    final hasVideo = videoBytes != null && videoBytes.isNotEmpty;
+
+    if (trimmed.isEmpty &&
+        caption.isEmpty &&
+        !hasVideo &&
+        (sourceUrl == null || sourceUrl.trim().isEmpty)) {
+      throw Exception(
+        'Bitte Link, den Text unter dem Video, oder ein Video hinzufügen.',
+      );
     }
 
     var url = sourceUrl?.trim() ?? '';
     var preview = PagePreview(url: url, title: '', description: '');
 
     if (url.isEmpty) {
-      final found = _extractFirstUrl(trimmed);
-      if (found != null) {
-        url = found;
-      }
+      final found = _extractFirstUrl(trimmed.isNotEmpty ? trimmed : caption);
+      if (found != null) url = found;
     }
 
     if (url.isNotEmpty) {
       preview = await fetchPagePreview(url);
     }
 
-    final combined = [
-      if (preview.title.isNotEmpty) 'Titel: ${preview.title}',
-      if (preview.description.isNotEmpty)
-        'Beschreibung: ${preview.description}',
-      if (trimmed.isNotEmpty) 'Zusätzlicher Text: $trimmed',
-      if (url.isNotEmpty) 'Quelle: $url',
+    // YouTube: Untertitel / Transkript vom Ton laden.
+    String? autoTranscript;
+    if (url.isNotEmpty && _looksLikeYoutube(url)) {
+      autoTranscript = await _transcripts.fetchYoutubeTranscript(url);
+    }
+
+    // Angehängtes Video: mit Whisper (OpenAI) Ton → Text, falls kein Gemini-Video.
+    String? whisperTranscript;
+    if (hasVideo &&
+        useAi &&
+        apiKey != null &&
+        apiKey.trim().isNotEmpty &&
+        provider == AiProvider.openai) {
+      try {
+        whisperTranscript = await _transcripts.transcribeWithWhisper(
+          bytes: videoBytes,
+          filename: videoFileName ?? 'recipe-video.mp4',
+          apiKey: apiKey.trim(),
+        );
+      } catch (_) {
+        // Weiter mit Textquellen; Fehler hängt die KI-Route ggf. später an.
+      }
+    }
+
+    final sources = _buildSourceBlocks(
+      preview: preview,
+      url: url,
+      pastedText: trimmed,
+      caption: caption,
+      youtubeTranscript: autoTranscript,
+      whisperTranscript: whisperTranscript,
+    );
+
+    final combinedForAi = [
+      'Aufgabe: Erstelle ein vollständiges, nachkochbares Rezept.',
+      'Nutze ALLE folgenden Quellen gemeinsam (Video-Beschreibung, '
+          'Untertitel/Ton, Link-Infos).',
+      'Wenn Angaben fehlen (Mengen, Zeiten, Zwischenschritte): '
+          'sinnvoll ergänzen und in notes kurz vermerken, was geschätzt wurde.',
+      'Widersprüche: der klarere/aktuellere Hinweis gewinnt '
+          '(meist gesprochener Text + Caption).',
+      '',
+      sources,
     ].join('\n');
 
     Recipe local() => _extractLocally(
-          combinedText: combined,
+          combinedText: sources,
           titleHint: preview.title,
           sourceUrl: url,
         );
@@ -121,14 +174,24 @@ class RecipeExtractor {
     }
 
     try {
+      // Gemini: Video direkt mitschicken (sieht + hört mit).
+      if (hasVideo && provider == AiProvider.gemini) {
+        return await _extractWithGeminiVideo(
+          combinedText: combinedForAi,
+          sourceUrl: url,
+          apiKey: apiKey.trim(),
+          videoBytes: videoBytes,
+          videoMimeType: videoMimeType ?? 'video/mp4',
+        );
+      }
+
       return await _extractWithAi(
         provider: provider,
-        combinedText: combined,
+        combinedText: combinedForAi,
         sourceUrl: url,
         apiKey: apiKey.trim(),
       );
     } catch (e) {
-      // Wichtig: Ohne funktionierende KI trotzdem ein Rezept anlegen.
       final fallback = local();
       final reason = e.toString().replaceFirst('Exception: ', '');
       return fallback.copyWith(
@@ -141,6 +204,47 @@ class RecipeExtractor {
         ].join('\n'),
       );
     }
+  }
+
+  String _buildSourceBlocks({
+    required PagePreview preview,
+    required String url,
+    required String pastedText,
+    required String caption,
+    String? youtubeTranscript,
+    String? whisperTranscript,
+  }) {
+    final parts = <String>[];
+
+    if (url.isNotEmpty) parts.add('Quelle (Link): $url');
+    if (preview.title.isNotEmpty) parts.add('Seitentitel: ${preview.title}');
+    if (preview.description.isNotEmpty) {
+      parts.add('Seitenbeschreibung / Meta-Text:\n${preview.description}');
+    }
+    if (caption.isNotEmpty) {
+      parts.add('Text unter dem Video (Caption / Beschreibung):\n$caption');
+    }
+    if (pastedText.isNotEmpty) {
+      parts.add('Eingefügter Text / geteilter Inhalt:\n$pastedText');
+    }
+    if (youtubeTranscript != null && youtubeTranscript.trim().isNotEmpty) {
+      parts.add(
+        'Gesprochener Text / Untertitel aus dem Video:\n'
+        '${youtubeTranscript.trim()}',
+      );
+    }
+    if (whisperTranscript != null && whisperTranscript.trim().isNotEmpty) {
+      parts.add(
+        'Aus dem Video-Ton transkribierter Text:\n'
+        '${whisperTranscript.trim()}',
+      );
+    }
+    return parts.join('\n\n');
+  }
+
+  bool _looksLikeYoutube(String url) {
+    final host = Uri.tryParse(url)?.host.replaceFirst('www.', '') ?? '';
+    return host.contains('youtube.com') || host == 'youtu.be';
   }
 
   /// Liest ein abfotografiertes Papier-Rezept mit KI aus (Bild → Rezept).
@@ -393,7 +497,10 @@ class RecipeExtractor {
       'ingredients (string[]), steps (string[]), '
       'notes (string|null). '
       'Sprache: Deutsch. '
-      'Schätze fehlende Mengen sinnvoll. '
+      'Nutze Caption-Text, Transkript/Untertitel und Link-Infos gemeinsam. '
+      'Fehlende Mengen, Zeiten und Schritte sinnvoll ergänzen '
+      '(typische Hausmannskost-Annahmen). '
+      'In notes kurz schreiben, was ergänzt/geschätzt wurde. '
       'Schreibe klare, kurze Kochschritte.';
 
   Future<Recipe> _extractWithAi({
@@ -425,6 +532,81 @@ class RecipeExtractor {
           apiKey: apiKey,
         );
     }
+  }
+
+  Future<Recipe> _extractWithGeminiVideo({
+    required String combinedText,
+    required String sourceUrl,
+    required String apiKey,
+    required Uint8List videoBytes,
+    required String videoMimeType,
+  }) async {
+    final uri = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/'
+      'gemini-3.5-flash:generateContent',
+    );
+    final response = await _client
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: jsonEncode({
+            'systemInstruction': {
+              'parts': [
+                {'text': _systemPrompt},
+              ],
+            },
+            'contents': [
+              {
+                'role': 'user',
+                'parts': [
+                  {
+                    'text':
+                        'Im Anhang ist das Rezeptvideo (Bild + Ton). '
+                        'Berücksichtige Video, Ton und diesen Text:\n'
+                        '$combinedText',
+                  },
+                  {
+                    'inline_data': {
+                      'mime_type': videoMimeType,
+                      'data': base64Encode(videoBytes),
+                    },
+                  },
+                ],
+              },
+            ],
+            'generationConfig': {
+              'temperature': 0.2,
+              'responseMimeType': 'application/json',
+            },
+          }),
+        )
+        .timeout(const Duration(seconds: 90));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        _aiErrorMessage(AiProvider.gemini, response.statusCode, response.body),
+      );
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final candidates = body['candidates'] as List?;
+    if (candidates == null || candidates.isEmpty) {
+      throw Exception('Gemini hat keine Antwort zum Video geliefert.');
+    }
+    final parts =
+        (candidates.first as Map<String, dynamic>)['content']?['parts'] as List?;
+    final text = parts
+            ?.map((p) => (p as Map<String, dynamic>)['text']?.toString() ?? '')
+            .join()
+            .trim() ??
+        '';
+    if (text.isEmpty) {
+      throw Exception('Gemini-Videoantwort war leer.');
+    }
+    return _recipeFromAiJson(text, sourceUrl);
   }
 
   Future<Recipe> _extractWithOpenAi({
@@ -797,11 +979,40 @@ class RecipeExtractor {
   }
 
   String _guessTitleFromText(String text) {
-    final first = text
+    final lines = text
         .split(RegExp(r'[\n\r]+'))
         .map((e) => e.trim())
-        .firstWhere((e) => e.isNotEmpty, orElse: () => 'Neues Rezept');
-    return _cleanTitle(first.replaceFirst(RegExp(r'^Titel:\s*'), ''));
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    for (final line in lines) {
+      final titled = RegExp(
+        r'^Titel\s*:\s*(.+)$',
+        caseSensitive: false,
+      ).firstMatch(line);
+      if (titled != null) {
+        return _cleanTitle(titled.group(1)!);
+      }
+    }
+
+    for (final line in lines) {
+      final lower = line.toLowerCase();
+      if (lower.startsWith('quelle') ||
+          lower.startsWith('seitentitel') ||
+          lower.startsWith('seitenbeschreibung') ||
+          lower.startsWith('text unter dem video') ||
+          lower.startsWith('eingefügter text') ||
+          lower.startsWith('gesprochener text') ||
+          lower.startsWith('aus dem video-ton') ||
+          lower.startsWith('zutat') ||
+          lower.startsWith('zubereitung') ||
+          lower.startsWith('anleitung')) {
+        continue;
+      }
+      return _cleanTitle(line.replaceFirst(RegExp(r'^Titel:\s*'), ''));
+    }
+
+    return 'Neues Rezept';
   }
 
   String _cleanTitle(String title) {
