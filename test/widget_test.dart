@@ -75,6 +75,57 @@ Zubereitung:
     expect(recipe.title.toLowerCase(), contains('garnelen'));
   });
 
+  test('KI-JSON mit Codeblock und Extra-Text wird gelesen', () {
+    final extractor = RecipeExtractor();
+    final recipe = extractor.parseAiRecipeJson('''
+Hier ist das Rezept:
+```json
+{
+  "title": "Tomatensuppe",
+  "servings": "2 Portionen",
+  "prepTimeMinutes": 20,
+  "ingredients": ["Tomaten", "Zwiebel"],
+  "steps": ["Anbraten", "Köcheln"],
+  "notes": "Geschätzt"
+}
+```
+Viel Erfolg!
+''');
+    expect(recipe.title, 'Tomatensuppe');
+    expect(recipe.ingredients, ['Tomaten', 'Zwiebel']);
+    expect(recipe.steps, ['Anbraten', 'Köcheln']);
+    expect(recipe.prepTimeMinutes, 20);
+  });
+
+  test('Gemini-Denktext wird vom Antwort-JSON getrennt', () {
+    final extractor = RecipeExtractor();
+    final text = extractor.readGeminiAnswerText({
+      'candidates': [
+        {
+          'finishReason': 'STOP',
+          'content': {
+            'parts': [
+              {
+                'text': 'Ich überlege: zuerst Zwiebeln...',
+                'thought': true,
+              },
+              {
+                'text':
+                    '{"title":"Ofenkartoffeln","servings":null,'
+                    '"prepTimeMinutes":35,"ingredients":["Kartoffeln"],'
+                    '"steps":["Waschen","Backen"],"notes":null}',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    final recipe = extractor.parseAiRecipeJson(text);
+    expect(recipe.title, 'Ofenkartoffeln');
+    expect(recipe.ingredients, ['Kartoffeln']);
+    expect(text.contains('überlege'), isFalse);
+  });
+
   test('Manuelles Rezept speichert Zutaten und Schritte', () {
     final extractor = RecipeExtractor();
     final recipe = extractor.buildManualRecipe(

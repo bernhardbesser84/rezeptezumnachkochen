@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
@@ -377,10 +377,7 @@ class RecipeExtractor {
                 ],
               },
             ],
-            'generationConfig': {
-              'temperature': 0.2,
-              'responseMimeType': 'application/json',
-            },
+            'generationConfig': _geminiJsonGenerationConfig(),
           }),
         )
         .timeout(const Duration(seconds: 60));
@@ -392,21 +389,7 @@ class RecipeExtractor {
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
-    final candidates = body['candidates'] as List?;
-    if (candidates == null || candidates.isEmpty) {
-      throw Exception('Gemini hat keine Antwort geliefert. Bitte erneut versuchen.');
-    }
-    final parts =
-        (candidates.first as Map<String, dynamic>)['content']?['parts'] as List?;
-    final text = parts
-            ?.map((p) => (p as Map<String, dynamic>)['text']?.toString() ?? '')
-            .join()
-            .trim() ??
-        '';
-    if (text.isEmpty) {
-      throw Exception('Gemini-Antwort war leer. Bitte erneut versuchen.');
-    }
-    return _recipeFromAiJson(text, '');
+    return _recipeFromAiJson(_geminiAnswerText(body), '');
   }
 
   Future<Recipe> _extractImageWithClaude({
@@ -595,10 +578,7 @@ class RecipeExtractor {
                 ],
               },
             ],
-            'generationConfig': {
-              'temperature': 0.2,
-              'responseMimeType': 'application/json',
-            },
+            'generationConfig': _geminiJsonGenerationConfig(),
           }),
         )
         .timeout(const Duration(seconds: 90));
@@ -610,21 +590,7 @@ class RecipeExtractor {
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
-    final candidates = body['candidates'] as List?;
-    if (candidates == null || candidates.isEmpty) {
-      throw Exception('Gemini hat keine Antwort zum Video geliefert.');
-    }
-    final parts =
-        (candidates.first as Map<String, dynamic>)['content']?['parts'] as List?;
-    final text = parts
-            ?.map((p) => (p as Map<String, dynamic>)['text']?.toString() ?? '')
-            .join()
-            .trim() ??
-        '';
-    if (text.isEmpty) {
-      throw Exception('Gemini-Videoantwort war leer.');
-    }
-    return _recipeFromAiJson(text, sourceUrl);
+    return _recipeFromAiJson(_geminiAnswerText(body), sourceUrl);
   }
 
   Future<Recipe> _extractWithOpenAi({
@@ -693,10 +659,7 @@ class RecipeExtractor {
                 ],
               },
             ],
-            'generationConfig': {
-              'temperature': 0.2,
-              'responseMimeType': 'application/json',
-            },
+            'generationConfig': _geminiJsonGenerationConfig(),
           }),
         )
         .timeout(const Duration(seconds: 45));
@@ -708,21 +671,7 @@ class RecipeExtractor {
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
-    final candidates = body['candidates'] as List?;
-    if (candidates == null || candidates.isEmpty) {
-      throw Exception('Gemini hat keine Antwort geliefert. Bitte erneut versuchen.');
-    }
-    final parts =
-        (candidates.first as Map<String, dynamic>)['content']?['parts'] as List?;
-    final text = parts
-            ?.map((p) => (p as Map<String, dynamic>)['text']?.toString() ?? '')
-            .join()
-            .trim() ??
-        '';
-    if (text.isEmpty) {
-      throw Exception('Gemini-Antwort war leer. Bitte erneut versuchen.');
-    }
-    return _recipeFromAiJson(text, sourceUrl);
+    return _recipeFromAiJson(_geminiAnswerText(body), sourceUrl);
   }
 
   Future<Recipe> _extractWithClaude({
@@ -772,18 +721,152 @@ class RecipeExtractor {
     return _recipeFromAiJson(text, sourceUrl);
   }
 
-  Recipe _recipeFromAiJson(String raw, String sourceUrl) {
-    final cleaned = raw
-        .trim()
+  /// Gemini-JSON-Config: festes Schema + wenig „Mitdenken“,
+  /// damit die Antwort nicht kaputt gemischt wird.
+  Map<String, dynamic> _geminiJsonGenerationConfig() {
+    return {
+      'maxOutputTokens': 4096,
+      'responseMimeType': 'application/json',
+      'thinkingConfig': {
+        'thinkingLevel': 'MINIMAL',
+      },
+      'responseSchema': {
+        'type': 'OBJECT',
+        'properties': {
+          'title': {'type': 'STRING'},
+          'servings': {
+            'type': 'STRING',
+            'nullable': true,
+          },
+          'prepTimeMinutes': {
+            'type': 'INTEGER',
+            'nullable': true,
+          },
+          'ingredients': {
+            'type': 'ARRAY',
+            'items': {'type': 'STRING'},
+          },
+          'steps': {
+            'type': 'ARRAY',
+            'items': {'type': 'STRING'},
+          },
+          'notes': {
+            'type': 'STRING',
+            'nullable': true,
+          },
+        },
+        'required': ['title', 'ingredients', 'steps'],
+      },
+    };
+  }
+
+  /// Nur den echten Antwort-Text nehmen — Denk-Texte von Gemini ignorieren.
+  String _geminiAnswerText(Map<String, dynamic> body) {
+    final candidates = body['candidates'] as List?;
+    if (candidates == null || candidates.isEmpty) {
+      throw Exception(
+        'Gemini hat keine Antwort geliefert. Bitte erneut versuchen.',
+      );
+    }
+    final first = Map<String, dynamic>.from(candidates.first as Map);
+    final parts = first['content'] is Map
+        ? (first['content'] as Map)['parts'] as List?
+        : null;
+    if (parts == null || parts.isEmpty) {
+      throw Exception('Gemini-Antwort war leer. Bitte erneut versuchen.');
+    }
+
+    final answerTexts = <String>[];
+    final anyTexts = <String>[];
+    for (final part in parts) {
+      if (part is! Map) continue;
+      final text = part['text']?.toString() ?? '';
+      if (text.trim().isEmpty) continue;
+      anyTexts.add(text);
+      if (part['thought'] == true) continue;
+      answerTexts.add(text);
+    }
+
+    final text =
+        (answerTexts.isNotEmpty ? answerTexts : anyTexts).join().trim();
+    if (text.isEmpty) {
+      throw Exception('Gemini-Antwort war leer. Bitte erneut versuchen.');
+    }
+
+    final finish = first['finishReason']?.toString() ?? '';
+    if (finish == 'MAX_TOKENS' || finish == 'LENGTH') {
+      // Trotzdem versuchen zu parsen; bei Fehler klarere Meldung.
+      try {
+        _decodeAiJsonObject(text);
+      } catch (_) {
+        throw Exception(
+          'Gemini-Antwort wurde abgeschnitten. '
+          'Bitte Caption kürzen und erneut versuchen.',
+        );
+      }
+    }
+    return text;
+  }
+
+  /// Robustes JSON lesen (auch mit ```json … ``` oder Text drumherum).
+  Map<String, dynamic> _decodeAiJsonObject(String raw) {
+    var cleaned = raw.trim();
+    cleaned = cleaned
         .replaceFirst(RegExp(r'^```(?:json)?\s*', caseSensitive: false), '')
-        .replaceFirst(RegExp(r'\s*```$'), '');
-    final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
+        .replaceFirst(RegExp(r'\s*```\s*$'), '')
+        .trim();
+
+    Object? decoded;
+    try {
+      decoded = jsonDecode(cleaned);
+    } catch (_) {
+      final start = cleaned.indexOf('{');
+      final end = cleaned.lastIndexOf('}');
+      if (start < 0 || end <= start) {
+        throw const FormatException(
+          'KI-Antwort war kein gültiges JSON-Rezept.',
+        );
+      }
+      decoded = jsonDecode(cleaned.substring(start, end + 1));
+    }
+
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    throw const FormatException('KI-Antwort war kein JSON-Objekt.');
+  }
+
+  @visibleForTesting
+  Recipe parseAiRecipeJson(String raw, [String sourceUrl = '']) {
+    return _recipeFromAiJson(raw, sourceUrl);
+  }
+
+  @visibleForTesting
+  String readGeminiAnswerText(Map<String, dynamic> body) {
+    return _geminiAnswerText(body);
+  }
+
+  Recipe _recipeFromAiJson(String raw, String sourceUrl) {
+    final parsed = _decodeAiJsonObject(raw);
 
     var title = (parsed['title'] as String?)?.trim() ?? '';
     title = _cleanTitle(_stripPlatformSuffix(title));
     if (title.isEmpty || _isUselessDishTitle(title)) {
       title = 'Neues Rezept';
     }
+
+    final servingsRaw = parsed['servings'];
+    final servings = servingsRaw == null
+        ? null
+        : servingsRaw.toString().trim().isEmpty
+            ? null
+            : servingsRaw.toString().trim();
+
+    final notesRaw = parsed['notes'];
+    final notes = notesRaw == null
+        ? null
+        : notesRaw.toString().trim().isEmpty
+            ? null
+            : notesRaw.toString().trim();
 
     return Recipe(
       id: _uuid.v4(),
@@ -792,11 +875,11 @@ class RecipeExtractor {
       steps: _asStringList(parsed['steps']),
       sourceUrl: sourceUrl,
       createdAt: DateTime.now(),
-      servings: parsed['servings'] as String?,
+      servings: servings,
       prepTimeMinutes: parsed['prepTimeMinutes'] is int
           ? parsed['prepTimeMinutes'] as int
           : int.tryParse('${parsed['prepTimeMinutes']}'),
-      notes: parsed['notes'] as String?,
+      notes: notes,
     );
   }
 
