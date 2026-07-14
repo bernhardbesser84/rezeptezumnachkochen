@@ -15,6 +15,10 @@ class RecipeStorage {
   static const _familyKey = 'family_config';
   static const _seededKey = 'demo_seeded';
   static const _aiProviderKey = 'ai_provider';
+  static const _googleWebClientIdKey = 'google_web_client_id';
+  static const _googleBackupEnabledKey = 'google_backup_enabled';
+  static const _googleBackupEmailKey = 'google_backup_email';
+  static const _googleBackupLastAtKey = 'google_backup_last_at';
 
   final _uuid = const Uuid();
 
@@ -212,5 +216,61 @@ class RecipeStorage {
   Future<void> markDemoSeeded() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_seededKey, true);
+  }
+
+  Future<String?> getGoogleWebClientId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_googleWebClientIdKey);
+  }
+
+  Future<void> setGoogleWebClientId(String? value) async {
+    final prefs = await SharedPreferences.getInstance();
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      await prefs.remove(_googleWebClientIdKey);
+    } else {
+      await prefs.setString(_googleWebClientIdKey, trimmed);
+    }
+  }
+
+  Future<bool> isGoogleBackupEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_googleBackupEnabledKey) ?? false;
+  }
+
+  Future<void> setGoogleBackupEnabled(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_googleBackupEnabledKey, value);
+  }
+
+  Future<String?> getGoogleBackupEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_googleBackupEmailKey);
+  }
+
+  Future<void> setGoogleBackupEmail(String? email) async {
+    final prefs = await SharedPreferences.getInstance();
+    final trimmed = email?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      await prefs.remove(_googleBackupEmailKey);
+    } else {
+      await prefs.setString(_googleBackupEmailKey, trimmed);
+    }
+  }
+
+  Future<DateTime?> getGoogleBackupLastAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_googleBackupLastAtKey);
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  Future<void> setGoogleBackupLastAt(DateTime? when) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (when == null) {
+      await prefs.remove(_googleBackupLastAtKey);
+    } else {
+      await prefs.setString(_googleBackupLastAtKey, when.toIso8601String());
+    }
   }
 }

@@ -2,9 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:rezept_nachkochen/main.dart';
+import 'package:rezept_nachkochen/models/ai_provider.dart';
+import 'package:rezept_nachkochen/models/app_backup_payload.dart';
 import 'package:rezept_nachkochen/models/recipe.dart';
 import 'package:rezept_nachkochen/services/app_repository.dart';
 import 'package:rezept_nachkochen/services/family_sync_service.dart';
+import 'package:rezept_nachkochen/services/google_backup_service.dart';
 import 'package:rezept_nachkochen/services/recipe_extractor.dart';
 import 'package:rezept_nachkochen/services/recipe_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -207,5 +210,38 @@ Viel Erfolg!
     await repo.setShoppingChecked(items.first, true);
     final updated = await repo.loadShopping(pullRemote: false);
     expect(updated.where((e) => e.checked).length, 1);
+  });
+
+  test('Backup-Payload enthält Rezepte und Einstellungen', () async {
+    final storage = RecipeStorage();
+    await storage.setAiProvider(AiProvider.gemini);
+    await storage.setApiKeyFor(AiProvider.gemini, 'AIza-test');
+    await storage.upsertRecipe(
+      Recipe(
+        id: 'b1',
+        title: 'Backup-Salat',
+        ingredients: const ['Salat'],
+        steps: const ['Waschen'],
+        sourceUrl: '',
+        createdAt: DateTime.now(),
+      ),
+    );
+
+    final backup = GoogleBackupService(storage: storage);
+    final payload = await backup.buildPayload();
+    expect(payload.recipes.any((r) => r.title == 'Backup-Salat'), isTrue);
+    expect(payload.aiProvider, AiProvider.gemini);
+    expect(payload.apiKeys['gemini'], 'AIza-test');
+
+    final roundtrip = AppBackupPayload.fromJsonString(payload.toJsonString());
+    expect(roundtrip.recipes.first.title, 'Backup-Salat');
+    expect(roundtrip.apiKeys['gemini'], 'AIza-test');
+
+    await storage.deleteRecipe('b1');
+    await storage.setApiKeyFor(AiProvider.gemini, null);
+    await backup.applyPayload(roundtrip);
+    final recipes = await storage.loadRecipes();
+    expect(recipes.any((r) => r.title == 'Backup-Salat'), isTrue);
+    expect(await storage.getApiKeyFor(AiProvider.gemini), 'AIza-test');
   });
 }

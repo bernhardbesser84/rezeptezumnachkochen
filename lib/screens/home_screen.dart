@@ -9,6 +9,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../models/recipe.dart';
 import '../services/app_repository.dart';
+import '../services/google_backup_service.dart';
 import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
@@ -24,10 +25,12 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.repository,
     required this.extractor,
+    this.googleBackup,
   });
 
   final AppRepository repository;
   final RecipeExtractor extractor;
+  final GoogleBackupService? googleBackup;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -247,7 +250,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openSettings() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => SettingsScreen(repository: widget.repository),
+        builder: (_) => SettingsScreen(
+          repository: widget.repository,
+          googleBackup: widget.googleBackup,
+        ),
       ),
     );
     await _reload();

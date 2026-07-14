@@ -2,6 +2,7 @@ import '../models/family_config.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 import 'family_sync_service.dart';
+import 'google_backup_service.dart';
 import 'recipe_storage.dart';
 
 /// Verbindet lokales Speichern und optionalen Cloud-Sync für die Familie.
@@ -9,10 +10,12 @@ class AppRepository {
   AppRepository({
     required this.storage,
     required this.sync,
+    this.googleBackup,
   });
 
   final RecipeStorage storage;
   final FamilySyncService sync;
+  final GoogleBackupService? googleBackup;
 
   Future<FamilyConfig?> family() => storage.loadFamilyConfig();
 
@@ -38,6 +41,7 @@ class AppRepository {
     if (config != null && config.hasCloud) {
       await sync.pushRecipe(config, recipe);
     }
+    await _backupQuietly();
   }
 
   Future<void> deleteRecipe(String id) async {
@@ -46,6 +50,7 @@ class AppRepository {
     if (config != null && config.hasCloud) {
       await sync.deleteRecipe(config, id);
     }
+    await _backupQuietly();
   }
 
   Future<List<ShoppingItem>> loadShopping({bool pullRemote = true}) async {
@@ -72,6 +77,7 @@ class AppRepository {
     if (config != null && config.hasCloud) {
       await sync.pushShoppingItem(config, updated);
     }
+    await _backupQuietly();
   }
 
   Future<void> deleteShoppingItem(String id) async {
@@ -80,6 +86,7 @@ class AppRepository {
     if (config != null && config.hasCloud) {
       await sync.deleteShoppingItem(config, id);
     }
+    await _backupQuietly();
   }
 
   Future<void> clearCheckedShopping() async {
@@ -92,6 +99,7 @@ class AppRepository {
         await sync.deleteShoppingItem(config, item.id);
       }
     }
+    await _backupQuietly();
   }
 
   Future<int> addRecipeToShopping(Recipe recipe) async {
@@ -102,11 +110,13 @@ class AppRepository {
         await sync.pushShoppingItem(config, item);
       }
     }
+    await _backupQuietly();
     return added.length;
   }
 
   Future<void> saveFamily(FamilyConfig config) async {
     await storage.saveFamilyConfig(config);
+    await _backupQuietly();
   }
 
   Future<void> fullSync() async {
@@ -127,6 +137,18 @@ class AppRepository {
 
     await sync.pushAllRecipes(config, mergedRecipes);
     await sync.pushAllShoppingItems(config, mergedShopping);
+    await _backupQuietly();
+  }
+
+  /// Nach Rezept-/Einstellungsänderungen still zu Google Drive sichern.
+  Future<void> _backupQuietly() async {
+    final backup = googleBackup;
+    if (backup == null) return;
+    try {
+      await backup.backupIfSignedIn();
+    } catch (_) {
+      // Backup darf die App-Nutzung nicht blockieren.
+    }
   }
 
   List<Recipe> _mergeRecipes(List<Recipe> local, List<Recipe> remote) {
