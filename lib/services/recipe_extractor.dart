@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
@@ -74,16 +75,17 @@ class RecipeExtractor {
   }
 
   /// Erstellt ein Rezept aus Link + optionalem Freitext.
-  /// Mit API-Schlüssel: bessere KI-Auswertung. Ohne: lokale Auswertung.
+  /// Mit API-Schlüssel: bessere KI-Auswertung. Ohne / bei Fehler: lokal.
   Future<Recipe> extractRecipe({
     required String sourceText,
     String? sourceUrl,
     String? apiKey,
     AiProvider provider = AiProvider.openai,
+    bool useAi = true,
   }) async {
     final trimmed = sourceText.trim();
     if (trimmed.isEmpty && (sourceUrl == null || sourceUrl.trim().isEmpty)) {
-      throw Exception('Bitte einen Link oder Text einfügen.');
+      throw Exception('Bitte einen Link, Text oder ein Foto hinzufügen.');
     }
 
     var url = sourceUrl?.trim() ?? '';
@@ -108,19 +110,278 @@ class RecipeExtractor {
       if (url.isNotEmpty) 'Quelle: $url',
     ].join('\n');
 
-    if (apiKey != null && apiKey.trim().isNotEmpty) {
-      return _extractWithAi(
+    Recipe local() => _extractLocally(
+          combinedText: combined,
+          titleHint: preview.title,
+          sourceUrl: url,
+        );
+
+    if (!useAi || apiKey == null || apiKey.trim().isEmpty) {
+      return local();
+    }
+
+    try {
+      return await _extractWithAi(
         provider: provider,
         combinedText: combined,
         sourceUrl: url,
         apiKey: apiKey.trim(),
       );
+    } catch (e) {
+      // Wichtig: Ohne funktionierende KI trotzdem ein Rezept anlegen.
+      final fallback = local();
+      final reason = e.toString().replaceFirst('Exception: ', '');
+      return fallback.copyWith(
+        notes: [
+          'KI war gerade nicht nutzbar ($reason).',
+          'Deshalb wurde eine einfache Auswertung ohne KI erstellt.',
+          'Du kannst Zutaten und Schritte danach selbst ergänzen.',
+          if (fallback.notes != null && fallback.notes!.isNotEmpty)
+            fallback.notes!,
+        ].join('\n'),
+      );
+    }
+  }
+
+  /// Liest ein abfotografiertes Papier-Rezept mit KI aus (Bild → Rezept).
+  Future<Recipe> extractRecipeFromImage({
+    required Uint8List imageBytes,
+    required String mimeType,
+    required String apiKey,
+    AiProvider provider = AiProvider.gemini,
+  }) async {
+    final b64 = base64Encode(imageBytes);
+    final prompt =
+        'Lies dieses Foto eines handgeschriebenen oder gedruckten Rezepts. '
+        'Erstelle daraus ein nachkochbares Rezept. $_systemPrompt';
+
+    switch (provider) {
+      case AiProvider.openai:
+        return _extractImageWithOpenAi(
+          prompt: prompt,
+          mimeType: mimeType,
+          b64: b64,
+          apiKey: apiKey,
+        );
+      case AiProvider.gemini:
+        return _extractImageWithGemini(
+          prompt: prompt,
+          mimeType: mimeType,
+          b64: b64,
+          apiKey: apiKey,
+        );
+      case AiProvider.claude:
+        return _extractImageWithClaude(
+          prompt: prompt,
+          mimeType: mimeType,
+          b64: b64,
+          apiKey: apiKey,
+        );
+    }
+  }
+
+  Future<Recipe> _extractImageWithOpenAi({
+    required String prompt,
+    required String mimeType,
+    required String b64,
+    required String apiKey,
+  }) async {
+    final response = await _client
+        .post(
+          Uri.parse('https://api.openai.com/v1/chat/completions'),
+          headers: {
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': 'gpt-4o-mini',
+            'temperature': 0.2,
+            'response_format': {'type': 'json_object'},
+            'messages': [
+              {
+                'role': 'user',
+                'content': [
+                  {'type': 'text', 'text': prompt},
+                  {
+                    'type': 'image_url',
+                    'image_url': {
+                      'url': 'data:$mimeType;base64,$b64',
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        _aiErrorMessage(AiProvider.openai, response.statusCode, response.body),
+      );
     }
 
-    return _extractLocally(
-      combinedText: combined,
-      titleHint: preview.title,
-      sourceUrl: url,
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final content =
+        (body['choices'] as List).first['message']['content'] as String;
+    return _recipeFromAiJson(content, '');
+  }
+
+  Future<Recipe> _extractImageWithGemini({
+    required String prompt,
+    required String mimeType,
+    required String b64,
+    required String apiKey,
+  }) async {
+    final uri = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/'
+      'gemini-3.5-flash:generateContent',
+    );
+    final response = await _client
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: jsonEncode({
+            'contents': [
+              {
+                'role': 'user',
+                'parts': [
+                  {'text': prompt},
+                  {
+                    'inline_data': {
+                      'mime_type': mimeType,
+                      'data': b64,
+                    },
+                  },
+                ],
+              },
+            ],
+            'generationConfig': {
+              'temperature': 0.2,
+              'responseMimeType': 'application/json',
+            },
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        _aiErrorMessage(AiProvider.gemini, response.statusCode, response.body),
+      );
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final candidates = body['candidates'] as List?;
+    if (candidates == null || candidates.isEmpty) {
+      throw Exception('Gemini hat keine Antwort geliefert. Bitte erneut versuchen.');
+    }
+    final parts =
+        (candidates.first as Map<String, dynamic>)['content']?['parts'] as List?;
+    final text = parts
+            ?.map((p) => (p as Map<String, dynamic>)['text']?.toString() ?? '')
+            .join()
+            .trim() ??
+        '';
+    if (text.isEmpty) {
+      throw Exception('Gemini-Antwort war leer. Bitte erneut versuchen.');
+    }
+    return _recipeFromAiJson(text, '');
+  }
+
+  Future<Recipe> _extractImageWithClaude({
+    required String prompt,
+    required String mimeType,
+    required String b64,
+    required String apiKey,
+  }) async {
+    final response = await _client
+        .post(
+          Uri.parse('https://api.anthropic.com/v1/messages'),
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': 'claude-haiku-4-5',
+            'max_tokens': 2048,
+            'temperature': 0.2,
+            'messages': [
+              {
+                'role': 'user',
+                'content': [
+                  {
+                    'type': 'image',
+                    'source': {
+                      'type': 'base64',
+                      'media_type': mimeType,
+                      'data': b64,
+                    },
+                  },
+                  {'type': 'text', 'text': prompt},
+                ],
+              },
+            ],
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        _aiErrorMessage(AiProvider.claude, response.statusCode, response.body),
+      );
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final content = body['content'] as List?;
+    if (content == null || content.isEmpty) {
+      throw Exception('Claude hat keine Antwort geliefert. Bitte erneut versuchen.');
+    }
+    final text = content
+        .whereType<Map>()
+        .map((part) => part['text']?.toString() ?? '')
+        .join()
+        .trim();
+    if (text.isEmpty) {
+      throw Exception('Claude-Antwort war leer. Bitte erneut versuchen.');
+    }
+    return _recipeFromAiJson(text, '');
+  }
+
+  /// Manuelles Rezept ohne KI (immer möglich).
+  Recipe buildManualRecipe({
+    required String title,
+    required List<String> ingredients,
+    required List<String> steps,
+    String? servings,
+    String? notes,
+  }) {
+    final cleanTitle = title.trim().isEmpty ? 'Mein Rezept' : title.trim();
+    final cleanIngredients = ingredients
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final cleanSteps =
+        steps.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
+    return Recipe(
+      id: _uuid.v4(),
+      title: cleanTitle,
+      ingredients: cleanIngredients.isEmpty
+          ? ['Zutaten noch ergänzen']
+          : cleanIngredients,
+      steps: cleanSteps.isEmpty
+          ? ['Schritte noch ergänzen']
+          : cleanSteps,
+      sourceUrl: '',
+      createdAt: DateTime.now(),
+      servings: servings?.trim().isEmpty == true ? null : servings?.trim(),
+      notes: notes?.trim().isEmpty == true
+          ? 'Manuell erfasst (ohne KI).'
+          : notes?.trim(),
     );
   }
 

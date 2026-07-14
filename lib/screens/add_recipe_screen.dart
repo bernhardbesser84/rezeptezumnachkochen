@@ -5,6 +5,8 @@ import '../services/app_repository.dart';
 import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
+import 'manual_recipe_screen.dart';
+import 'photo_recipe_screen.dart';
 
 class AddRecipeScreen extends StatefulWidget {
   const AddRecipeScreen({
@@ -26,12 +28,26 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   late final TextEditingController _controller;
   bool _loading = false;
   bool _alsoShopping = true;
+  bool _useAi = true;
+  bool _hasApiKey = false;
   String? _error;
+  String? _info;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialSharedText ?? '');
+    _loadKeyState();
+  }
+
+  Future<void> _loadKeyState() async {
+    final key = await widget.repository.storage.getApiKey();
+    if (!mounted) return;
+    setState(() {
+      _hasApiKey = key != null && key.trim().isNotEmpty;
+      // Ohne Schlüssel: immer ohne KI erstellen.
+      _useAi = _hasApiKey;
+    });
   }
 
   @override
@@ -60,6 +76,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _info = null;
     });
 
     try {
@@ -74,6 +91,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         sourceUrl: url,
         apiKey: apiKey,
         provider: provider,
+        useAi: _useAi,
       );
 
       await widget.repository.saveRecipe(recipe);
@@ -81,6 +99,19 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         await widget.repository.addRecipeToShopping(recipe);
       }
       if (!mounted) return;
+
+      final usedFallback = recipe.notes?.contains('KI war gerade nicht nutzbar') ==
+          true;
+      if (usedFallback) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'KI nicht erreichbar — Rezept trotzdem ohne KI angelegt. '
+              'Du kannst es danach ergänzen.',
+            ),
+          ),
+        );
+      }
       Navigator.pop(context, recipe);
     } catch (e) {
       setState(() {
@@ -90,6 +121,34 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
       if (mounted) {
         setState(() => _loading = false);
       }
+    }
+  }
+
+  Future<void> _openManual() async {
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ManualRecipeScreen(
+          repository: widget.repository,
+          extractor: widget.extractor,
+        ),
+      ),
+    );
+    if (result != null && mounted) {
+      Navigator.pop(context, result);
+    }
+  }
+
+  Future<void> _openPhoto() async {
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PhotoRecipeScreen(
+          repository: widget.repository,
+          extractor: widget.extractor,
+        ),
+      ),
+    );
+    if (result != null && mounted) {
+      Navigator.pop(context, result);
     }
   }
 
@@ -122,16 +181,36 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                       ? 'Am iPhone:\n'
                           '1. Rezeptvideo öffnen und den Link kopieren.\n'
                           '2. Hier auf „Link einfügen“ tippen.\n'
-                          '3. Anleitung erstellen – danach siehst du das Rezept '
-                          'auch auf Galaxy und Tablett.'
+                          '3. Anleitung erstellen – auch ohne API-Schlüssel.\n'
+                          'Oder: Papier-Rezept fotografieren / selbst tippen.'
                       : '1. Am iPhone ein Rezeptvideo öffnen.\n'
                           '2. Auf Teilen tippen und „Rezept Nachkochen“ wählen '
                           '(oder Link hier einfügen).\n'
-                          '3. Anleitung erstellen – danach erscheint das Rezept '
-                          'auch auf Tablett und Galaxy.',
+                          '3. Anleitung erstellen – auch ohne API-Schlüssel.\n'
+                          'Oder: Papier-Rezept fotografieren / selbst tippen.',
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _loading ? null : _openPhoto,
+                  icon: const Icon(Icons.photo_camera),
+                  label: const Text('Fotografieren'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _loading ? null : _openManual,
+                  icon: const Icon(Icons.edit_note),
+                  label: const Text('Selbst tippen'),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 18),
           TextField(
@@ -160,7 +239,25 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                 ? null
                 : (value) => setState(() => _alsoShopping = value),
           ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('KI verwenden (falls Schlüssel da)'),
+            subtitle: Text(
+              _hasApiKey
+                  ? 'Wenn die KI nicht geht, wird trotzdem ohne KI gespeichert.'
+                  : 'Kein Schlüssel hinterlegt — es wird ohne KI erstellt.',
+            ),
+            value: _useAi && _hasApiKey,
+            onChanged: (!_hasApiKey || _loading)
+                ? null
+                : (value) => setState(() => _useAi = value),
+          ),
           const SizedBox(height: 8),
+          if (_info != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(_info!),
+            ),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -184,8 +281,9 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Tipp: Mit KI-Schlüssel (OpenAI, Gemini oder Claude) unter '
-            'Einstellungen werden Zutaten und Schritte deutlich besser.',
+            'Tipp: Ohne KI-Schlüssel funktioniert die App trotzdem. '
+            'Mit Schlüssel (OpenAI, Gemini oder Claude) werden Zutaten und '
+            'Schritte oft besser — und Fotos lassen sich automatisch auslesen.',
           ),
         ],
       ),
