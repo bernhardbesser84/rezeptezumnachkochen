@@ -351,18 +351,44 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: AppTheme.seed.withValues(alpha: 0.12)),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFFF4FAF6),
+                  Color(0xFFFFF7F3),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppTheme.seed.withValues(alpha: 0.14)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'So holt die KI das meiste aus dem Video',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.accentSoft,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.auto_awesome,
+                        color: AppTheme.accent,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'So holt die KI das meiste aus dem Video',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 Text(
                   webHint
                       ? '1. Video-Link einfügen.\n'
