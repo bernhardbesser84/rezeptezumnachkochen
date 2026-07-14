@@ -5,8 +5,9 @@ import '../models/recipe.dart';
 import '../services/app_repository.dart';
 import '../theme/app_theme.dart';
 import 'cook_mode_screen.dart';
+import 'edit_recipe_screen.dart';
 
-class RecipeDetailScreen extends StatelessWidget {
+class RecipeDetailScreen extends StatefulWidget {
   const RecipeDetailScreen({
     super.key,
     required this.recipe,
@@ -18,21 +19,34 @@ class RecipeDetailScreen extends StatelessWidget {
   final AppRepository repository;
   final Future<void> Function() onDelete;
 
-  Future<void> _openSource(BuildContext context) async {
-    if (recipe.sourceUrl.isEmpty) return;
-    final uri = Uri.tryParse(recipe.sourceUrl);
+  @override
+  State<RecipeDetailScreen> createState() => _RecipeDetailScreenState();
+}
+
+class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
+  late Recipe _recipe;
+
+  @override
+  void initState() {
+    super.initState();
+    _recipe = widget.recipe;
+  }
+
+  Future<void> _openSource() async {
+    if (_recipe.sourceUrl.isEmpty) return;
+    final uri = Uri.tryParse(_recipe.sourceUrl);
     if (uri == null) return;
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && context.mounted) {
+    if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Link konnte nicht geöffnet werden.')),
       );
     }
   }
 
-  Future<void> _addToShopping(BuildContext context) async {
-    final count = await repository.addRecipeToShopping(recipe);
-    if (!context.mounted) return;
+  Future<void> _addToShopping() async {
+    final count = await widget.repository.addRecipeToShopping(_recipe);
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -44,12 +58,26 @@ class RecipeDetailScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmDelete(BuildContext context) async {
+  Future<void> _editRecipe() async {
+    final updated = await Navigator.of(context).push<Recipe>(
+      MaterialPageRoute(
+        builder: (_) => EditRecipeScreen(
+          recipe: _recipe,
+          repository: widget.repository,
+        ),
+      ),
+    );
+    if (updated != null && mounted) {
+      setState(() => _recipe = updated);
+    }
+  }
+
+  Future<void> _confirmDelete() async {
     final shouldDelete = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Rezept löschen?'),
-        content: Text('„${recipe.title}“ wirklich entfernen?'),
+        content: Text('„${_recipe.title}“ wirklich entfernen?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -63,26 +91,33 @@ class RecipeDetailScreen extends StatelessWidget {
       ),
     );
     if (shouldDelete == true) {
-      await onDelete();
-      if (context.mounted) Navigator.pop(context);
+      await widget.onDelete();
+      if (mounted) Navigator.pop(context);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final recipe = _recipe;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Rezept'),
         actions: [
+          IconButton(
+            tooltip: 'Bearbeiten',
+            onPressed: _editRecipe,
+            icon: const Icon(Icons.edit_outlined),
+          ),
           if (recipe.sourceUrl.isNotEmpty)
             IconButton(
               tooltip: 'Video anschauen',
-              onPressed: () => _openSource(context),
+              onPressed: _openSource,
               icon: const Icon(Icons.play_circle_outline),
             ),
           IconButton(
             tooltip: 'Löschen',
-            onPressed: () => _confirmDelete(context),
+            onPressed: _confirmDelete,
             icon: const Icon(Icons.delete_outline),
           ),
         ],
@@ -116,13 +151,19 @@ class RecipeDetailScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
+          FilledButton.tonalIcon(
+            onPressed: _editRecipe,
+            icon: const Icon(Icons.edit_outlined),
+            label: const Text('Alles bearbeiten'),
+          ),
+          const SizedBox(height: 8),
           if (recipe.sourceUrl.isNotEmpty)
             FilledButton.tonalIcon(
-              onPressed: () => _openSource(context),
+              onPressed: _openSource,
               icon: const Icon(Icons.ondemand_video),
               label: const Text('Video zum Anschauen öffnen'),
             ),
-          const SizedBox(height: 8),
+          if (recipe.sourceUrl.isNotEmpty) const SizedBox(height: 8),
           FilledButton.icon(
             onPressed: () {
               Navigator.of(context).push(
@@ -136,7 +177,7 @@ class RecipeDetailScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
-            onPressed: () => _addToShopping(context),
+            onPressed: _addToShopping,
             icon: const Icon(Icons.shopping_cart_outlined),
             label: const Text('Zur Einkaufsliste'),
           ),
