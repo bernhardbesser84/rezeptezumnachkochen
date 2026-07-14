@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../models/ai_provider.dart';
 import '../services/app_repository.dart';
 import '../theme/app_theme.dart';
 import '../utils/clipboard_paste.dart';
@@ -20,6 +21,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _focusNode = FocusNode();
   bool _loading = true;
   bool _obscure = false; // Auf dem iPhone sonst oft kein „Einfügen“
+  AiProvider _provider = AiProvider.openai;
 
   @override
   void initState() {
@@ -28,9 +30,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _load() async {
-    final key = await widget.repository.storage.getApiKey();
+    final provider = await widget.repository.storage.getAiProvider();
+    final key = await widget.repository.storage.getApiKeyFor(provider);
+    _provider = provider;
     _controller.text = key ?? '';
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _switchProvider(AiProvider provider) async {
+    if (provider == _provider) return;
+    // Aktuellen Text erst zwischenspeichern, damit nichts verloren geht.
+    await widget.repository.storage.setApiKeyFor(_provider, _controller.text);
+    await widget.repository.storage.setAiProvider(provider);
+    final key = await widget.repository.storage.getApiKeyFor(provider);
+    setState(() {
+      _provider = provider;
+      _controller.text = key ?? '';
+      _controller.selection = TextSelection.collapsed(
+        offset: _controller.text.length,
+      );
+    });
   }
 
   Future<void> _pasteKey() async {
@@ -55,16 +74,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _save() async {
-    await widget.repository.storage.setApiKey(_controller.text);
+    await widget.repository.storage.setAiProvider(_provider);
+    await widget.repository.storage.setApiKeyFor(_provider, _controller.text);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Einstellungen gespeichert.')),
+      SnackBar(
+        content: Text('${_provider.label}-Einstellungen gespeichert.'),
+      ),
     );
     Navigator.pop(context);
   }
 
-  Future<void> _openOpenAi() async {
-    final uri = Uri.parse('https://platform.openai.com/api-keys');
+  Future<void> _openKeyPage() async {
+    final uri = Uri.parse(_provider.keyPageUrl);
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -103,16 +125,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const Divider(height: 32),
                 const Text(
-                  'OpenAI API-Schlüssel (optional)',
+                  'KI-Anbieter (optional)',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                 ),
                 const SizedBox(height: 8),
                 const Text(
                   'Damit aus Videos eine richtige Schritt-für-Schritt-Anleitung '
-                  'wird. Ohne Schlüssel funktioniert die App trotzdem, nur '
-                  'einfacher.',
+                  'wird. Du kannst OpenAI, Gemini oder Claude nutzen. '
+                  'Ohne Schlüssel funktioniert die App trotzdem, nur einfacher.',
                 ),
                 const SizedBox(height: 14),
+                SegmentedButton<AiProvider>(
+                  segments: [
+                    for (final provider in AiProvider.values)
+                      ButtonSegment(
+                        value: provider,
+                        label: Text(provider.label),
+                      ),
+                  ],
+                  selected: {_provider},
+                  onSelectionChanged: (values) {
+                    if (values.isEmpty) return;
+                    _switchProvider(values.first);
+                  },
+                ),
+                const SizedBox(height: 16),
                 TextField(
                   controller: _controller,
                   focusNode: _focusNode,
@@ -122,8 +159,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   keyboardType: TextInputType.visiblePassword,
                   enableInteractiveSelection: true,
                   decoration: InputDecoration(
-                    labelText: 'API-Schlüssel',
-                    hintText: 'sk-...',
+                    labelText: '${_provider.label} API-Schlüssel',
+                    hintText: _provider.keyHint,
                     suffixIcon: IconButton(
                       tooltip: _obscure ? 'Anzeigen' : 'Verbergen',
                       onPressed: () => setState(() => _obscure = !_obscure),
@@ -140,17 +177,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   label: const Text('Schlüssel einfügen'),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Tipp fürs iPhone: Schlüssel zuerst kopieren, dann hier auf '
-                  '„Schlüssel einfügen“ tippen.\n'
-                  'Wichtig: Bei OpenAI muss Billing/Guthaben aktiv sein. '
-                  'Sonst kommt Fehler 429, auch wenn der Schlüssel stimmt.',
+                Text(
+                  'Tipp fürs iPhone: ${_provider.label}-Schlüssel zuerst '
+                  'kopieren, dann hier auf „Schlüssel einfügen“ tippen.\n'
+                  'Jeder Anbieter speichert seinen eigenen Schlüssel. '
+                  'Bei Limit-Fehler (429): Guthaben/Kontingent im '
+                  '${_provider.label}-Konto prüfen.',
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
-                  onPressed: _openOpenAi,
+                  onPressed: _openKeyPage,
                   icon: const Icon(Icons.open_in_new),
-                  label: const Text('Schlüssel bei OpenAI holen'),
+                  label: Text('Schlüssel bei ${_provider.label} holen'),
                 ),
                 const SizedBox(height: 16),
                 FilledButton(
