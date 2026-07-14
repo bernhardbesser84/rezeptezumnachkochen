@@ -22,7 +22,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
   final _keyController = TextEditingController();
   bool _loading = true;
   bool _saving = false;
-  bool _obscureKey = true;
+  bool _obscureKey = false; // Auf dem iPhone sonst oft kein „Einfügen“
   String? _status;
 
   @override
@@ -42,6 +42,28 @@ class _FamilyScreenState extends State<FamilyScreen> {
       _deviceController.text = 'Mein Gerät';
     }
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _pasteInto(TextEditingController controller, String label) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (text.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Zwischenablage ist leer. Bitte zuerst kopieren.'),
+        ),
+      );
+      return;
+    }
+    setState(() {
+      controller.text = text;
+      controller.selection = TextSelection.collapsed(offset: text.length);
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$label eingefügt.')),
+    );
   }
 
   Future<void> _createFamily() async {
@@ -182,15 +204,31 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _urlController,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  keyboardType: TextInputType.url,
+                  enableInteractiveSelection: true,
                   decoration: const InputDecoration(
                     labelText: 'Supabase Project URL',
                     hintText: 'https://xxxxx.supabase.co',
                   ),
                 ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _saving
+                      ? null
+                      : () => _pasteInto(_urlController, 'URL'),
+                  icon: const Icon(Icons.content_paste),
+                  label: const Text('URL einfügen'),
+                ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _keyController,
                   obscureText: _obscureKey,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  keyboardType: TextInputType.visiblePassword,
+                  enableInteractiveSelection: true,
                   decoration: InputDecoration(
                     labelText: 'Supabase anon/public Key',
                     hintText: 'eyJhbGciOi...',
@@ -202,6 +240,19 @@ class _FamilyScreenState extends State<FamilyScreen> {
                       ),
                     ),
                   ),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed: _saving
+                      ? null
+                      : () => _pasteInto(_keyController, 'Schlüssel'),
+                  icon: const Icon(Icons.content_paste),
+                  label: const Text('Schlüssel einfügen'),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Tipp fürs iPhone: Wert zuerst kopieren, dann auf '
+                  '„… einfügen“ tippen.',
                 ),
                 const SizedBox(height: 14),
                 if (_status != null)

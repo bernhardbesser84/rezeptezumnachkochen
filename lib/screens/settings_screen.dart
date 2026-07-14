@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_repository.dart';
@@ -16,8 +17,9 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _controller = TextEditingController();
+  final _focusNode = FocusNode();
   bool _loading = true;
-  bool _obscure = true;
+  bool _obscure = false; // Auf dem iPhone sonst oft kein „Einfügen“
 
   @override
   void initState() {
@@ -29,6 +31,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final key = await widget.repository.storage.getApiKey();
     _controller.text = key ?? '';
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _pasteKey() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (text.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Zwischenablage ist leer. Bitte den Schlüssel zuerst kopieren.',
+          ),
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _controller.text = text;
+      _controller.selection = TextSelection.collapsed(offset: text.length);
+    });
+    _focusNode.requestFocus();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Schlüssel eingefügt.')),
+    );
   }
 
   Future<void> _save() async {
@@ -48,6 +75,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -91,17 +119,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 14),
                 TextField(
                   controller: _controller,
+                  focusNode: _focusNode,
                   obscureText: _obscure,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  keyboardType: TextInputType.visiblePassword,
+                  enableInteractiveSelection: true,
                   decoration: InputDecoration(
                     labelText: 'API-Schlüssel',
                     hintText: 'sk-...',
                     suffixIcon: IconButton(
+                      tooltip: _obscure ? 'Anzeigen' : 'Verbergen',
                       onPressed: () => setState(() => _obscure = !_obscure),
                       icon: Icon(
                         _obscure ? Icons.visibility : Icons.visibility_off,
                       ),
                     ),
                   ),
+                ),
+                const SizedBox(height: 10),
+                FilledButton.tonalIcon(
+                  onPressed: _pasteKey,
+                  icon: const Icon(Icons.content_paste),
+                  label: const Text('Schlüssel einfügen'),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Tipp fürs iPhone: Schlüssel zuerst kopieren, dann hier auf '
+                  '„Schlüssel einfügen“ tippen.',
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -133,7 +178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       SizedBox(height: 8),
                       Text(
-                        '• iPhone: Videos finden und teilen\n'
+                        '• iPhone: Videos finden und Link einfügen\n'
                         '• Samsung-Tablett: große Kochschritte + Video\n'
                         '• Galaxy-Handy: Einkaufsliste abhaken im Laden',
                       ),
