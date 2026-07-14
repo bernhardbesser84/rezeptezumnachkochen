@@ -50,8 +50,29 @@ Zubereitung:
       useAi: false,
     );
     expect(recipe.title.isNotEmpty, isTrue);
+    expect(recipe.title.toLowerCase(), isNot(contains('facebook')));
     expect(recipe.ingredients, isNotEmpty);
     expect(recipe.steps, isNotEmpty);
+  });
+
+  test('Facebook-Link ohne Caption ergibt keinen Plattform-Titel', () async {
+    final extractor = RecipeExtractor();
+    final recipe = await extractor.extractRecipe(
+      sourceText: 'https://www.facebook.com/watch/?v=123',
+      useAi: false,
+    );
+    expect(recipe.title.toLowerCase(), isNot(contains('facebook')));
+    expect(recipe.title.toLowerCase(), isNot(contains('rezept von')));
+  });
+
+  test('Caption liefert den Gerichtsnamen', () async {
+    final extractor = RecipeExtractor();
+    final recipe = await extractor.extractRecipe(
+      sourceText: 'https://www.facebook.com/reel/1',
+      captionText: 'Knoblauch-Garnelen\n200 g Garnelen\n2 Knoblauchzehen',
+      useAi: false,
+    );
+    expect(recipe.title.toLowerCase(), contains('garnelen'));
   });
 
   test('Manuelles Rezept speichert Zutaten und Schritte', () {

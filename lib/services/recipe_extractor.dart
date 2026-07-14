@@ -151,6 +151,14 @@ class RecipeExtractor {
       whisperTranscript: whisperTranscript,
     );
 
+    final dishTitle = _bestDishTitle(
+      pageTitle: preview.title,
+      caption: caption,
+      pastedText: trimmed,
+      youtubeTranscript: autoTranscript,
+      whisperTranscript: whisperTranscript,
+    );
+
     final combinedForAi = [
       'Aufgabe: Erstelle ein vollständiges, nachkochbares Rezept.',
       'Nutze ALLE folgenden Quellen gemeinsam (Video-Beschreibung, '
@@ -159,13 +167,19 @@ class RecipeExtractor {
           'sinnvoll ergänzen und in notes kurz vermerken, was geschätzt wurde.',
       'Widersprüche: der klarere/aktuellere Hinweis gewinnt '
           '(meist gesprochener Text + Caption).',
+      'WICHTIG für title: Vergib einen klaren deutschen Gerichtsnamen '
+          '(z. B. „Cremige Tomaten-Pasta“). '
+          'Niemals Plattformnamen wie Facebook, Instagram, TikTok oder '
+          '„Rezept von …“ als Titel verwenden.',
+      if (dishTitle != 'Neues Rezept')
+        'Vorschlag für den Titel (nur wenn passend): $dishTitle',
       '',
       sources,
     ].join('\n');
 
     Recipe local() => _extractLocally(
           combinedText: sources,
-          titleHint: preview.title,
+          titleHint: dishTitle,
           sourceUrl: url,
         );
 
@@ -497,6 +511,10 @@ class RecipeExtractor {
       'ingredients (string[]), steps (string[]), '
       'notes (string|null). '
       'Sprache: Deutsch. '
+      'title MUSS ein echter Gerichtsname sein '
+      '(z. B. „Knoblauch-Garnelen“, „Ofengemüse mit Feta“). '
+      'Niemals „Facebook“, „Instagram“, „TikTok“, „YouTube“ oder '
+      '„Rezept von …“ als title. '
       'Nutze Caption-Text, Transkript/Untertitel und Link-Infos gemeinsam. '
       'Fehlende Mengen, Zeiten und Schritte sinnvoll ergänzen '
       '(typische Hausmannskost-Annahmen). '
@@ -761,11 +779,15 @@ class RecipeExtractor {
         .replaceFirst(RegExp(r'\s*```$'), '');
     final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
 
+    var title = (parsed['title'] as String?)?.trim() ?? '';
+    title = _cleanTitle(_stripPlatformSuffix(title));
+    if (title.isEmpty || _isUselessDishTitle(title)) {
+      title = 'Neues Rezept';
+    }
+
     return Recipe(
       id: _uuid.v4(),
-      title: (parsed['title'] as String?)?.trim().isNotEmpty == true
-          ? parsed['title'] as String
-          : 'Unbenanntes Rezept',
+      title: title,
       ingredients: _asStringList(parsed['ingredients']),
       steps: _asStringList(parsed['steps']),
       sourceUrl: sourceUrl,
@@ -822,9 +844,17 @@ class RecipeExtractor {
       }
     }
 
-    final title = titleHint.trim().isNotEmpty
-        ? _cleanTitle(titleHint)
-        : _guessTitleFromText(combinedText);
+    final title = () {
+      final fromHint = titleHint.trim().isNotEmpty
+          ? _cleanTitle(_stripPlatformSuffix(titleHint))
+          : '';
+      if (fromHint.isNotEmpty && !_isUselessDishTitle(fromHint)) {
+        return fromHint;
+      }
+      final fromText = _guessTitleFromText(combinedText);
+      if (!_isUselessDishTitle(fromText)) return fromText;
+      return 'Neues Rezept';
+    }();
 
     if (ingredients.isEmpty && steps.isEmpty) {
       return _buildFallbackRecipe(title: title, sourceUrl: sourceUrl);
@@ -971,11 +1001,105 @@ class RecipeExtractor {
     return match?.group(0)?.replaceAll(RegExp(r'[),.;]+$'), '');
   }
 
+  /// Seiten-/Plattform-Titel, die kein Gerichtsname sind.
+  bool _isUselessDishTitle(String title) {
+    final t = title.trim().toLowerCase();
+    if (t.isEmpty) return true;
+    if (t.startsWith('rezept von ')) return true;
+    if (RegExp(
+      r'^(facebook|instagram|tiktok|youtube|fb\.watch|youtu\.be)'
+      r'(\.com)?$',
+    ).hasMatch(t)) {
+      return true;
+    }
+    if (RegExp(
+      r'^(watch|reel|reels|video|shared (post|video)|beitrag|geteilt)$',
+    ).hasMatch(t)) {
+      return true;
+    }
+    // „Something | Facebook“ ohne echten Namen
+    if (RegExp(r'^\s*(watch|reel|video)?\s*\|?\s*(facebook|instagram|tiktok)\s*$')
+        .hasMatch(t)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Facebook & Co. hängen oft „| Facebook“ an — entfernen.
+  String _stripPlatformSuffix(String title) {
+    return title
+        .replaceAll(
+          RegExp(
+            r'\s*[\|\-–—]\s*(Facebook|Instagram|TikTok|YouTube|Watch)\s*$',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+  }
+
+  /// Bester Titel aus Meta, Caption und Text — nie „Rezept von facebook.com“.
+  String _bestDishTitle({
+    required String pageTitle,
+    required String caption,
+    required String pastedText,
+    String? youtubeTranscript,
+    String? whisperTranscript,
+  }) {
+    final candidates = <String>[];
+
+    void add(String? value) {
+      if (value == null) return;
+      final cleaned = _cleanTitle(_stripPlatformSuffix(value));
+      if (cleaned.isEmpty || _isUselessDishTitle(cleaned)) return;
+      if (cleaned.toLowerCase() == 'neues rezept') return;
+      if (!candidates.contains(cleaned)) candidates.add(cleaned);
+    }
+
+    // Caption & eingefügter Text zuerst — dort steht meist der Gerichtsname.
+    for (final block in [caption, pastedText]) {
+      for (final line in block.split(RegExp(r'[\n\r]+'))) {
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) continue;
+        if (trimmed.startsWith('http')) continue;
+        if (trimmed.startsWith('#')) continue;
+        final titled = RegExp(
+          r'^Titel\s*:\s*(.+)$',
+          caseSensitive: false,
+        ).firstMatch(trimmed);
+        if (titled != null) {
+          add(titled.group(1));
+          break;
+        }
+        if (trimmed.length >= 3 &&
+            trimmed.length <= 80 &&
+            !_looksLikeIngredient(trimmed) &&
+            !_looksLikeStep(trimmed)) {
+          add(trimmed);
+          break;
+        }
+      }
+    }
+
+    add(pageTitle);
+
+    for (final transcript in [youtubeTranscript, whisperTranscript]) {
+      if (transcript == null || transcript.trim().isEmpty) continue;
+      final firstSentences = transcript
+          .split(RegExp(r'[.!?\n]'))
+          .map((e) => e.trim())
+          .where((e) => e.length >= 8 && e.length <= 80)
+          .toList();
+      if (firstSentences.isNotEmpty) add(firstSentences.first);
+    }
+
+    if (candidates.isNotEmpty) return candidates.first;
+    return 'Neues Rezept';
+  }
+
   String _guessTitleFromUrl(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return 'Geteiltes Rezeptvideo';
-    final host = uri.host.replaceFirst(RegExp(r'^www\.'), '');
-    return 'Rezept von $host';
+    // Früher: „Rezept von facebook.com“ — das ist kein Gerichtsname.
+    return 'Neues Rezept';
   }
 
   String _guessTitleFromText(String text) {
