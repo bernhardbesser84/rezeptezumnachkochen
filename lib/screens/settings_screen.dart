@@ -142,7 +142,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 8),
                 const Text(
                   'Tipp fürs iPhone: Schlüssel zuerst kopieren, dann hier auf '
-                  '„Schlüssel einfügen“ tippen.',
+                  '„Schlüssel einfügen“ tippen.\n'
+                  'Wichtig: Bei OpenAI muss Billing/Guthaben aktiv sein. '
+                  'Sonst kommt Fehler 429, auch wenn der Schlüssel stimmt.',
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(

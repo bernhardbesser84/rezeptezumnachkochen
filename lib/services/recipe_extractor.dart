@@ -162,10 +162,7 @@ class RecipeExtractor {
         .timeout(const Duration(seconds: 45));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        'KI-Anfrage fehlgeschlagen (${response.statusCode}). '
-        'Prüfe deinen API-Schlüssel unter Einstellungen.',
-      );
+      throw Exception(_openAiErrorMessage(response.statusCode, response.body));
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -323,6 +320,45 @@ class RecipeExtractor {
       prepTimeMinutes: 25,
       notes: 'Beispielrezept zum Ausprobieren der App.',
     );
+  }
+
+  /// Verständliche Meldung für OpenAI-Fehlercodes.
+  String _openAiErrorMessage(int statusCode, String body) {
+    final lower = body.toLowerCase();
+    final quotaEmpty = lower.contains('insufficient_quota') ||
+        lower.contains('billing') ||
+        lower.contains('exceeded your current quota');
+    final rateLimited = lower.contains('rate_limit');
+
+    switch (statusCode) {
+      case 401:
+      case 403:
+        return 'API-Schlüssel ungültig oder ohne Berechtigung. '
+            'Bitte unter Einstellungen prüfen und neu speichern.';
+      case 429:
+        if (quotaEmpty) {
+          return 'OpenAI-Guthaben / Kontingent ist leer (429). '
+              'Unter platform.openai.com Guthaben aufladen '
+              'oder Usage-Limits prüfen — der Schlüssel selbst kann stimmen.';
+        }
+        if (rateLimited) {
+          return 'Zu viele Anfragen bei OpenAI (429). '
+              'Bitte 1–2 Minuten warten und erneut versuchen.';
+        }
+        return 'OpenAI meldet Limit erreicht (429). '
+            'Meist: Guthaben leer oder zu viele Anfragen. '
+            'Prüfe unter platform.openai.com Billing & Usage — '
+            'nicht zwingend der API-Schlüssel.';
+      case 500:
+      case 502:
+      case 503:
+        return 'OpenAI ist gerade gestört ($statusCode). '
+            'Bitte später nochmal versuchen.';
+      default:
+        return 'KI-Anfrage fehlgeschlagen ($statusCode). '
+            'Falls der Schlüssel neu ist: unter Einstellungen prüfen. '
+            'Sonst später erneut versuchen.';
+    }
   }
 
   List<String> _asStringList(dynamic value) {
