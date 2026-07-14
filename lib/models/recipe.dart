@@ -83,4 +83,28 @@ class Recipe {
         'prep_time_minutes': prepTimeMinutes,
         'notes': notes,
       };
+
+  Recipe copyWith({
+    String? id,
+    String? title,
+    List<String>? ingredients,
+    List<String>? steps,
+    String? sourceUrl,
+    DateTime? createdAt,
+    String? servings,
+    int? prepTimeMinutes,
+    String? notes,
+  }) {
+    return Recipe(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      ingredients: ingredients ?? this.ingredients,
+      steps: steps ?? this.steps,
+      sourceUrl: sourceUrl ?? this.sourceUrl,
+      createdAt: createdAt ?? this.createdAt,
+      servings: servings ?? this.servings,
+      prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
+      notes: notes ?? this.notes,
+    );
+  }
 }

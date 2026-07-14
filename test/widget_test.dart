@@ -43,6 +43,29 @@ Zubereitung:
     expect(recipe.steps.length, greaterThanOrEqualTo(2));
   });
 
+  test('Ohne API entsteht trotzdem ein Rezept aus Link-Text', () async {
+    final extractor = RecipeExtractor();
+    final recipe = await extractor.extractRecipe(
+      sourceText: 'https://example.com/mein-kuchen',
+      useAi: false,
+    );
+    expect(recipe.title.isNotEmpty, isTrue);
+    expect(recipe.ingredients, isNotEmpty);
+    expect(recipe.steps, isNotEmpty);
+  });
+
+  test('Manuelles Rezept speichert Zutaten und Schritte', () {
+    final extractor = RecipeExtractor();
+    final recipe = extractor.buildManualRecipe(
+      title: 'Omas Kuchen',
+      ingredients: const ['Mehl', 'Zucker'],
+      steps: const ['Mischen', 'Backen'],
+    );
+    expect(recipe.title, 'Omas Kuchen');
+    expect(recipe.ingredients, ['Mehl', 'Zucker']);
+    expect(recipe.steps, ['Mischen', 'Backen']);
+  });
+
   test('Einkaufsliste speichert Abhaken lokal', () async {
     final storage = RecipeStorage();
     final repo = AppRepository(storage: storage, sync: FamilySyncService());
