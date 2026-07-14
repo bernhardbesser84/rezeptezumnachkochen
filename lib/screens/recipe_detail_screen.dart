@@ -101,6 +101,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     final recipe = _recipe;
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('Rezept'),
         actions: [
@@ -122,106 +123,115 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-        children: [
-          Text(
-            recipe.title,
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+      body: DecoratedBox(
+        decoration: AppTheme.pageBackdrop(),
+        child: CustomPaint(
+          painter: KitchenDotsPainter(),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
             children: [
-              if (recipe.servings != null && recipe.servings!.isNotEmpty)
-                _MetaChip(
-                  icon: Icons.restaurant,
-                  label: recipe.servings!,
-                ),
-              if (recipe.prepTimeMinutes != null)
-                _MetaChip(
-                  icon: Icons.timer_outlined,
-                  label: '${recipe.prepTimeMinutes} Min.',
-                ),
-              _MetaChip(
-                icon: Icons.checklist_rtl,
-                label: '${recipe.ingredients.length} Zutaten',
+              Text(
+                recipe.title,
+                style: Theme.of(context).textTheme.headlineMedium,
               ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (recipe.servings != null && recipe.servings!.isNotEmpty)
+                    _MetaChip(
+                      icon: Icons.restaurant,
+                      label: recipe.servings!,
+                    ),
+                  if (recipe.prepTimeMinutes != null)
+                    _MetaChip(
+                      icon: Icons.timer_outlined,
+                      label: '${recipe.prepTimeMinutes} Min.',
+                    ),
+                  _MetaChip(
+                    icon: Icons.checklist_rtl,
+                    label: '${recipe.ingredients.length} Zutaten',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              FilledButton.tonalIcon(
+                onPressed: _editRecipe,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Alles bearbeiten'),
+              ),
+              const SizedBox(height: 8),
+              if (recipe.sourceUrl.isNotEmpty)
+                FilledButton.tonalIcon(
+                  onPressed: _openSource,
+                  icon: const Icon(Icons.ondemand_video),
+                  label: const Text('Video zum Anschauen öffnen'),
+                ),
+              if (recipe.sourceUrl.isNotEmpty) const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => CookModeScreen(recipe: recipe),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.soup_kitchen_outlined),
+                label: const Text('Am Tablett nachkochen'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _addToShopping,
+                icon: const Icon(Icons.shopping_cart_outlined),
+                label: const Text('Zur Einkaufsliste'),
+              ),
+              if (recipe.notes != null && recipe.notes!.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentSoft,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: AppTheme.accent.withValues(alpha: 0.22),
+                    ),
+                  ),
+                  child: Text(recipe.notes!),
+                ),
+              ],
+              const SizedBox(height: 24),
+              Text(
+                'Einkaufsliste / Zutaten',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 6),
+              const Text('Das braucht ihr an Lebensmitteln:'),
+              const SizedBox(height: 12),
+              ...recipe.ingredients.asMap().entries.map(
+                    (entry) => _IngredientTile(
+                      index: entry.key + 1,
+                      text: entry.value,
+                    ),
+                  ),
+              const SizedBox(height: 28),
+              Text(
+                'So bereitet ihr es zu',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 6),
+              const Text('Schritt für Schritt:'),
+              const SizedBox(height: 12),
+              ...recipe.steps.asMap().entries.map(
+                    (entry) => _StepTile(
+                      number: entry.key + 1,
+                      text: entry.value,
+                    ),
+                  ),
             ],
           ),
-          const SizedBox(height: 14),
-          FilledButton.tonalIcon(
-            onPressed: _editRecipe,
-            icon: const Icon(Icons.edit_outlined),
-            label: const Text('Alles bearbeiten'),
-          ),
-          const SizedBox(height: 8),
-          if (recipe.sourceUrl.isNotEmpty)
-            FilledButton.tonalIcon(
-              onPressed: _openSource,
-              icon: const Icon(Icons.ondemand_video),
-              label: const Text('Video zum Anschauen öffnen'),
-            ),
-          if (recipe.sourceUrl.isNotEmpty) const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => CookModeScreen(recipe: recipe),
-                ),
-              );
-            },
-            icon: const Icon(Icons.soup_kitchen_outlined),
-            label: const Text('Am Tablett nachkochen'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _addToShopping,
-            icon: const Icon(Icons.shopping_cart_outlined),
-            label: const Text('Zur Einkaufsliste'),
-          ),
-          if (recipe.notes != null && recipe.notes!.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppTheme.accent.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Text(recipe.notes!),
-            ),
-          ],
-          const SizedBox(height: 24),
-          Text(
-            'Einkaufsliste / Zutaten',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 6),
-          const Text('Das braucht ihr an Lebensmitteln:'),
-          const SizedBox(height: 12),
-          ...recipe.ingredients.asMap().entries.map(
-                (entry) => _IngredientTile(
-                  index: entry.key + 1,
-                  text: entry.value,
-                ),
-              ),
-          const SizedBox(height: 28),
-          Text(
-            'So bereitet ihr es zu',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 6),
-          const Text('Schritt für Schritt:'),
-          const SizedBox(height: 12),
-          ...recipe.steps.asMap().entries.map(
-                (entry) => _StepTile(
-                  number: entry.key + 1,
-                  text: entry.value,
-                ),
-              ),
-        ],
+        ),
       ),
     );
   }
@@ -238,9 +248,9 @@ class _MetaChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppTheme.seed.withValues(alpha: 0.15)),
+        color: AppTheme.mistDeep,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.seed.withValues(alpha: 0.12)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
