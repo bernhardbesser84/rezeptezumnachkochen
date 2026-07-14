@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/app_repository.dart';
+import '../services/caption_fetcher.dart';
 import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
@@ -36,8 +37,10 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   late final TextEditingController _linkController;
   late final TextEditingController _captionController;
   final _picker = ImagePicker();
+  late final CaptionFetcher _captionFetcher;
 
   bool _loading = false;
+  bool _fetchingCaption = false;
   bool _alsoShopping = true;
   bool _useAi = true;
   bool _hasApiKey = false;
@@ -68,7 +71,17 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     _videoBytes = widget.initialVideoBytes;
     _videoMimeType = widget.initialVideoMimeType;
     _videoName = widget.initialVideoName;
+    _captionFetcher = CaptionFetcher(extractor: widget.extractor);
     _loadKeyState();
+
+    // Link schon da, Caption noch leer → automatisch versuchen zu laden.
+    if (_linkController.text.trim().startsWith('http') &&
+        _captionController.text.trim().isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _loadCaptionFromLink(silentIfEmpty: true);
+      });
+    }
   }
 
   Future<void> _loadKeyState() async {
@@ -98,6 +111,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
       return;
     }
     final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(text);
+    var shouldAutoload = false;
     setState(() {
       if (urlMatch != null) {
         _linkController.text = urlMatch.group(0)!;
@@ -108,11 +122,77 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
               _captionController.text.trim(),
             rest,
           ].join('\n\n');
+        } else if (_captionController.text.trim().isEmpty) {
+          shouldAutoload = true;
         }
       } else {
         _linkController.text = text;
+        if (text.startsWith('http') && _captionController.text.trim().isEmpty) {
+          shouldAutoload = true;
+        }
       }
     });
+    if (shouldAutoload) {
+      await _loadCaptionFromLink(silentIfEmpty: true);
+    }
+  }
+
+  Future<void> _loadCaptionFromLink({bool silentIfEmpty = false}) async {
+    final raw = _linkController.text.trim();
+    final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(raw);
+    final url = urlMatch?.group(0) ?? raw;
+    if (!url.startsWith('http')) {
+      setState(() {
+        _error = 'Bitte zuerst einen Video-Link einfügen.';
+      });
+      return;
+    }
+
+    setState(() {
+      _fetchingCaption = true;
+      _error = null;
+      _info = 'Caption wird vom Link geladen…';
+    });
+
+    try {
+      final result = await _captionFetcher.fetchFromUrl(url);
+      if (!mounted) return;
+
+      if (!result.hasCaption) {
+        setState(() {
+          _fetchingCaption = false;
+          _info = null;
+          if (!silentIfEmpty) {
+            _error = result.warning ??
+                'Keine Caption gefunden. Bitte Text unter dem Video manuell einfügen.';
+          } else {
+            _info =
+                'Keine Caption automatisch gefunden — bitte Text unter dem Video einfügen.';
+          }
+        });
+        return;
+      }
+
+      setState(() {
+        _captionController.text = result.caption;
+        _captionController.selection = TextSelection.collapsed(
+          offset: result.caption.length,
+        );
+        _fetchingCaption = false;
+        _info =
+            'Caption automatisch geladen'
+            '${result.title.isNotEmpty ? ' (${result.title})' : ''}. '
+            'Bitte kurz prüfen, dann Anleitung erstellen.';
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _fetchingCaption = false;
+        _info = null;
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
   }
 
   Future<void> _pasteCaption() async {
@@ -286,17 +366,14 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                 Text(
                   webHint
                       ? '1. Video-Link einfügen.\n'
-                          '2. Den kompletten Text unter dem Video '
-                          '(Caption) kopieren und hier einfügen.\n'
-                          '3. Optional: Video-Datei anhängen '
-                          '(Ton + Bild).\n'
-                          '4. Anleitung erstellen — fehlende Mengen '
-                          'ergänzt die KI.'
+                          '2. Caption wird oft automatisch geladen '
+                          '(Button „Caption vom Link laden“).\n'
+                          '3. Optional: Video-Datei anhängen.\n'
+                          '4. Anleitung erstellen — fehlende Mengen ergänzt die KI.'
                       : '1. Video teilen oder Link einfügen.\n'
-                          '2. Caption / Text unter dem Video mitnehmen.\n'
+                          '2. Caption vom Link laden (oder selbst einfügen).\n'
                           '3. Optional Video anhängen für Ton + Bild.\n'
-                          '4. Anleitung erstellen — fehlende Infos '
-                          'ergänzt die KI.',
+                          '4. Anleitung erstellen — fehlende Infos ergänzt die KI.',
                 ),
               ],
             ),
@@ -333,7 +410,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
-            onPressed: _loading ? null : _pasteLink,
+            onPressed: (_loading || _fetchingCaption) ? null : _pasteLink,
             icon: const Icon(Icons.content_paste),
             label: const Text('Link einfügen'),
           ),
@@ -345,16 +422,33 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             decoration: const InputDecoration(
               labelText: 'Text unter dem Video (Caption)',
               hintText:
-                  'Komplette Beschreibung / Zutatenliste aus dem Video '
-                  'hier einfügen',
+                  'Wird oft automatisch vom Link geladen — bitte prüfen',
               alignLabelWithHint: true,
             ),
           ),
           const SizedBox(height: 8),
+          FilledButton.tonalIcon(
+            onPressed: (_loading || _fetchingCaption)
+                ? null
+                : () => _loadCaptionFromLink(),
+            icon: _fetchingCaption
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download),
+            label: Text(
+              _fetchingCaption
+                  ? 'Caption wird geladen…'
+                  : 'Caption vom Link laden',
+            ),
+          ),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
-            onPressed: _loading ? null : _pasteCaption,
+            onPressed: (_loading || _fetchingCaption) ? null : _pasteCaption,
             icon: const Icon(Icons.notes),
-            label: const Text('Caption / Beschreibung einfügen'),
+            label: const Text('Caption manuell einfügen'),
           ),
           const SizedBox(height: 16),
           const Text(
@@ -467,9 +561,9 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Tipp: Bei YouTube werden Untertitel oft automatisch geladen. '
-            'Bei Instagram/TikTok Caption unbedingt mitkopieren — '
-            'dort ist der Text unter dem Video die wichtigste Quelle.',
+            'Tipp: YouTube-Captions klappen oft automatisch. '
+            'Bei Instagram/TikTok sperren die Plattformen manchmal den Text — '
+            'dann einmal manuell kopieren. Die KI ergänzt danach fehlende Mengen.',
           ),
         ],
       ),
