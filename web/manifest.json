@@ -3,7 +3,7 @@
     "short_name": "Rezept",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#F7F3E8",
+    "background_color": "#FFE8D6",
     "theme_color": "#2F6F4E",
     "description": "Rezeptvideos teilen und als Einkaufsliste plus Schritt-für-Schritt-Anleitung nachkochen.",
     "orientation": "portrait-primary",
