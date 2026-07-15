@@ -154,8 +154,15 @@ Viel Erfolg!
       return http.Response(
         '''
 <html><head>
-<meta property="og:title" content="58.263 Aufrufe · 7.530 Reaktionen | High Protein D&#xf6;ner Wrap &#x1f32f;" />
-<meta property="og:description" content="High Protein D&#xf6;ner Wrap mit Sauce" />
+<meta property="og:title" content="58.263 Aufrufe · 7.530 Reaktionen | High Protein D&#xf6;ner Wrap &#x1f32f;
+
+Dieser High Protein D&#xf6;ner Wrap mit Sauce und Wrap. Kommentiere DÖNER. #highprotein #rezepte" />
+<meta property="og:description" content="High Protein D&#xf6;ner Wrap mit Sauce..."/>
+<meta property="og:image:alt" content="58.263 Aufrufe | High Protein D&#xf6;ner Wrap
+
+Dieser High Protein D&#xf6;ner Wrap mit selbstgemachten Dönerfleisch ist die perfekte Alternative.
+
+Willst du das Rezept als PDF? Kommentiere DÖNER. #highprotein #rezepte KevinElstner" />
 <meta property="og:url" content="https://www.facebook.com/reel/3276267172553159/" />
 </head><body></body></html>
 ''',
@@ -174,7 +181,22 @@ Viel Erfolg!
       contains('döner wrap'),
     );
     expect(preview.description.toLowerCase(), contains('döner wrap'));
+    expect(preview.description.contains('...'), isFalse);
+    expect(preview.description.length, greaterThan(120));
     expect(preview.url, contains('/reel/'));
+  });
+
+  test('Abgeschnittene Facebook-Description wird zugunsten Titel verworfen', () {
+    final extractor = RecipeExtractor();
+    final html = '''
+<meta property="og:description" content="High Protein Döner Wrap als..." />
+<meta property="og:title" content="10 Aufrufe | High Protein Döner Wrap
+
+Lange Caption ohne Abschneidung mit Zutatenhinweis und Hashtags." />
+''';
+    final caption = extractor.bestFacebookCaptionForTest(html);
+    expect(caption.contains('Lange Caption'), isTrue);
+    expect(caption.endsWith('...'), isFalse);
   });
 
   test('Manuelles Rezept speichert Zutaten und Schritte', () {

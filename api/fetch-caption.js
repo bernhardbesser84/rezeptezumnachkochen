@@ -94,6 +94,8 @@ async function fetchHtml(url, userAgent = UA_MOBILE) {
 
 async function fetchFacebook(url) {
   // Facebook liefert og:title/description zuverlässig an Crawler-UAs.
+  // Wichtig: og:description ist oft abgeschnitten („…“),
+  // og:title / og:image:alt enthalten den vollen Text.
   const agents = [UA_FACEBOOK, UA_MOBILE];
   for (const agent of agents) {
     try {
@@ -101,16 +103,21 @@ async function fetchFacebook(url) {
       if (html.includes('Error Facebook') && !html.includes('og:title')) {
         continue;
       }
-      const title = cleanDishTitle(
-        decodeEntities(meta(html, 'og:title') || tagText(html, 'title') || ''),
-      );
-      let caption = decodeEntities(
+      const ogTitle = decodeEntities(meta(html, 'og:title') || '');
+      const ogImageAlt = decodeEntities(meta(html, 'og:image:alt') || '');
+      const ogDescription = decodeEntities(
         meta(html, 'og:description') ||
           metaName(html, 'description') ||
           metaName(html, 'twitter:description') ||
           '',
-      ).trim();
-      if (!caption && title) caption = title;
+      );
+      const caption = pickBestFacebookCaption([
+        ogImageAlt,
+        ogTitle,
+        ogDescription,
+        decodeEntities(metaName(html, 'twitter:image:alt') || ''),
+      ]);
+      const title = cleanDishTitle(ogTitle || caption);
       const ogUrl = decodeEntities(meta(html, 'og:url') || '').trim();
       if (caption || title) {
         return {
@@ -132,6 +139,34 @@ async function fetchFacebook(url) {
       'Facebook hat keinen Beschreibungstext geliefert. '
       + 'Bitte den Text unter dem Video manuell kopieren.',
   };
+}
+
+/** Längsten, nicht abgeschnittenen Caption-Text wählen. */
+function pickBestFacebookCaption(candidates) {
+  const cleaned = candidates
+    .map((raw) => stripFacebookViewsPrefix(decodeEntities(raw || '')).trim())
+    .filter((t) => t.length >= 8);
+
+  if (cleaned.length === 0) return '';
+
+  // Vollständige Texte bevorzugen (nicht mit „…“ abgeschnitten).
+  const complete = cleaned.filter((t) => !/\.\.\.\s*$/.test(t));
+  const pool = complete.length > 0 ? complete : cleaned;
+  pool.sort((a, b) => b.length - a.length);
+  return pool[0];
+}
+
+function stripFacebookViewsPrefix(raw) {
+  let t = (raw || '').replace(/\r/g, '').trim();
+  // „58K views · … | High Protein …“ → ab dem Gerichtsnamen
+  const pipe = t.split('|');
+  if (pipe.length >= 2) {
+    const left = pipe[0].toLowerCase();
+    if (/(aufrufe|views|reaktionen|reactions|likes|kommentare|comments|shares)/.test(left)) {
+      t = pipe.slice(1).join('|').trim();
+    }
+  }
+  return t;
 }
 
 async function fetchYoutube(url) {
