@@ -116,6 +116,17 @@ class CaptionFetcher {
       }
     }
 
+    // Facebook: Beschreibung oft abgeschnitten — längeren Titel-Text nutzen.
+    if (host.contains('facebook.com') || host == 'fb.watch' || host == 'fb.com') {
+      final fromTitle = preview.title.trim();
+      final titleLooksLonger = fromTitle.length > caption.length + 20;
+      final captionTruncated =
+          caption.endsWith('...') || caption.endsWith('…');
+      if (caption.isEmpty || (captionTruncated && titleLooksLonger)) {
+        caption = fromTitle;
+      }
+    }
+
     if (caption.isEmpty) {
       return FetchedCaption(
         title: preview.title,
@@ -130,7 +141,11 @@ class CaptionFetcher {
     return FetchedCaption(
       title: preview.title,
       caption: caption,
-      source: host.contains('youtube') ? 'youtube' : 'og',
+      source: host.contains('youtube')
+          ? 'youtube'
+          : host.contains('facebook')
+              ? 'facebook-og'
+              : 'og',
     );
   }
 

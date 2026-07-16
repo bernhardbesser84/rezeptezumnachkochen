@@ -80,11 +80,15 @@ class RecipeExtractor {
           _metaName(html, 'title'),
           _tagText(html, 'title'),
         ]);
-        final description = _firstNonEmpty([
-          _metaContent(html, 'og:description'),
-          _metaName(html, 'description'),
-          _metaName(html, 'twitter:description'),
-        ]);
+        // Facebook: og:description ist oft mit „…“ abgeschnitten —
+        // og:title / og:image:alt enthalten den vollen Text.
+        final description = isFacebook
+            ? _bestFacebookCaption(html)
+            : _firstNonEmpty([
+                _metaContent(html, 'og:description'),
+                _metaName(html, 'description'),
+                _metaName(html, 'twitter:description'),
+              ]);
         final canonical = _firstNonEmpty([
           _metaContent(html, 'og:url'),
           url,
@@ -153,13 +157,16 @@ class RecipeExtractor {
 
     // Wenn niemand Caption eingefügt hat: Meta-Beschreibung vom Link nutzen.
     var effectiveCaption = caption;
-    if (effectiveCaption.isEmpty && preview.description.trim().isNotEmpty) {
-      effectiveCaption = preview.description.trim();
+    if (effectiveCaption.isEmpty || _looksTruncatedCaption(effectiveCaption)) {
+      final fromMeta = preview.description.trim();
+      if (fromMeta.length > effectiveCaption.length) {
+        effectiveCaption = fromMeta;
+      }
     }
     if (effectiveCaption.isEmpty &&
         preview.title.trim().isNotEmpty &&
         !_isUselessDishTitle(_cleanTitle(_stripPlatformSuffix(preview.title)))) {
-      effectiveCaption = preview.title.trim();
+      effectiveCaption = _stripFacebookViewsPrefix(preview.title).trim();
     }
 
     // YouTube: Untertitel / Transkript vom Ton laden.
@@ -404,44 +411,27 @@ class RecipeExtractor {
     required String b64,
     required String apiKey,
   }) async {
-    final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/'
-      'gemini-3.5-flash:generateContent',
-    );
-    final response = await _client
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          body: jsonEncode({
-            'contents': [
+    final body = await _postGeminiGenerateContent(
+      apiKey: apiKey,
+      payload: {
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': prompt},
               {
-                'role': 'user',
-                'parts': [
-                  {'text': prompt},
-                  {
-                    'inline_data': {
-                      'mime_type': mimeType,
-                      'data': b64,
-                    },
-                  },
-                ],
+                'inline_data': {
+                  'mime_type': mimeType,
+                  'data': b64,
+                },
               },
             ],
-            'generationConfig': _geminiJsonGenerationConfig(),
-          }),
-        )
-        .timeout(const Duration(seconds: 60));
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        _aiErrorMessage(AiProvider.gemini, response.statusCode, response.body),
-      );
-    }
-
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+          },
+        ],
+        'generationConfig': _geminiJsonGenerationConfig(),
+      },
+      timeout: const Duration(seconds: 60),
+    );
     return _recipeFromAiJson(_geminiAnswerText(body), '');
   }
 
@@ -596,54 +586,37 @@ class RecipeExtractor {
     required Uint8List videoBytes,
     required String videoMimeType,
   }) async {
-    final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/'
-      'gemini-3.5-flash:generateContent',
-    );
-    final response = await _client
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          body: jsonEncode({
-            'systemInstruction': {
-              'parts': [
-                {'text': _systemPrompt},
-              ],
-            },
-            'contents': [
+    final body = await _postGeminiGenerateContent(
+      apiKey: apiKey,
+      payload: {
+        'systemInstruction': {
+          'parts': [
+            {'text': _systemPrompt},
+          ],
+        },
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
               {
-                'role': 'user',
-                'parts': [
-                  {
-                    'text':
-                        'Im Anhang ist das Rezeptvideo (Bild + Ton). '
-                        'Berücksichtige Video, Ton und diesen Text:\n'
-                        '$combinedText',
-                  },
-                  {
-                    'inline_data': {
-                      'mime_type': videoMimeType,
-                      'data': base64Encode(videoBytes),
-                    },
-                  },
-                ],
+                'text':
+                    'Im Anhang ist das Rezeptvideo (Bild + Ton). '
+                    'Berücksichtige Video, Ton und diesen Text:\n'
+                    '$combinedText',
+              },
+              {
+                'inline_data': {
+                  'mime_type': videoMimeType,
+                  'data': base64Encode(videoBytes),
+                },
               },
             ],
-            'generationConfig': _geminiJsonGenerationConfig(),
-          }),
-        )
-        .timeout(const Duration(seconds: 90));
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        _aiErrorMessage(AiProvider.gemini, response.statusCode, response.body),
-      );
-    }
-
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+          },
+        ],
+        'generationConfig': _geminiJsonGenerationConfig(),
+      },
+      timeout: const Duration(seconds: 90),
+    );
     return _recipeFromAiJson(_geminiAnswerText(body), sourceUrl);
   }
 
@@ -688,43 +661,26 @@ class RecipeExtractor {
     required String sourceUrl,
     required String apiKey,
   }) async {
-    final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/'
-      'gemini-3.5-flash:generateContent',
-    );
-    final response = await _client
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          body: jsonEncode({
-            'systemInstruction': {
-              'parts': [
-                {'text': _systemPrompt},
-              ],
-            },
-            'contents': [
-              {
-                'role': 'user',
-                'parts': [
-                  {'text': combinedText},
-                ],
-              },
+    final body = await _postGeminiGenerateContent(
+      apiKey: apiKey,
+      payload: {
+        'systemInstruction': {
+          'parts': [
+            {'text': _systemPrompt},
+          ],
+        },
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': combinedText},
             ],
-            'generationConfig': _geminiJsonGenerationConfig(),
-          }),
-        )
-        .timeout(const Duration(seconds: 45));
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        _aiErrorMessage(AiProvider.gemini, response.statusCode, response.body),
-      );
-    }
-
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+          },
+        ],
+        'generationConfig': _geminiJsonGenerationConfig(),
+      },
+      timeout: const Duration(seconds: 45),
+    );
     return _recipeFromAiJson(_geminiAnswerText(body), sourceUrl);
   }
 
@@ -775,6 +731,13 @@ class RecipeExtractor {
     return _recipeFromAiJson(text, sourceUrl);
   }
 
+  /// Modelle der Reihe nach — bei 503/Überlastung das nächste versuchen.
+  static const _geminiModels = <String>[
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+  ];
+
   /// Gemini-JSON-Config: festes Schema + wenig „Mitdenken“,
   /// damit die Antwort nicht kaputt gemischt wird.
   Map<String, dynamic> _geminiJsonGenerationConfig() {
@@ -812,6 +775,76 @@ class RecipeExtractor {
         'required': ['title', 'ingredients', 'steps'],
       },
     };
+  }
+
+  /// Gemini mit Retry (503/429) und Ersatz-Modellen.
+  Future<Map<String, dynamic>> _postGeminiGenerateContent({
+    required String apiKey,
+    required Map<String, dynamic> payload,
+    required Duration timeout,
+  }) async {
+    Exception? lastError;
+
+    for (final model in _geminiModels) {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final uri = Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/models/'
+          '$model:generateContent',
+        );
+
+        late final http.Response response;
+        try {
+          final requestPayload = _payloadForGeminiModel(model, payload);
+          response = await _client
+              .post(
+                uri,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'x-goog-api-key': apiKey,
+                },
+                body: jsonEncode(requestPayload),
+              )
+              .timeout(timeout);
+        } catch (e) {
+          lastError = Exception(
+            'Gemini-Netzwerkfehler. Bitte Verbindung prüfen und erneut versuchen.',
+          );
+          await Future<void>.delayed(
+            Duration(milliseconds: 700 * (attempt + 1)),
+          );
+          continue;
+        }
+
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          return jsonDecode(response.body) as Map<String, dynamic>;
+        }
+
+        final retriable = response.statusCode == 429 ||
+            response.statusCode == 500 ||
+            response.statusCode == 502 ||
+            response.statusCode == 503;
+        final modelMissing = response.statusCode == 404;
+
+        lastError = Exception(
+          _aiErrorMessage(
+            AiProvider.gemini,
+            response.statusCode,
+            response.body,
+          ),
+        );
+
+        if (modelMissing) break; // nächstes Modell
+        if (!retriable) throw lastError;
+        await Future<void>.delayed(
+          Duration(milliseconds: 700 * (attempt + 1)),
+        );
+      }
+    }
+
+    throw lastError ??
+        Exception(
+          'Gemini ist gerade nicht erreichbar. Bitte später erneut versuchen.',
+        );
   }
 
   /// Nur den echten Antwort-Text nehmen — Denk-Texte von Gemini ignorieren.
@@ -1284,6 +1317,69 @@ class RecipeExtractor {
     return 'Neues Rezept';
   }
 
+  /// Ältere Gemini-Modelle verstehen thinkingConfig nicht.
+  Map<String, dynamic> _payloadForGeminiModel(
+    String model,
+    Map<String, dynamic> payload,
+  ) {
+    if (model.startsWith('gemini-3')) return payload;
+    final copy = Map<String, dynamic>.from(payload);
+    final gen = copy['generationConfig'];
+    if (gen is Map) {
+      final genCopy = Map<String, dynamic>.from(gen);
+      genCopy.remove('thinkingConfig');
+      copy['generationConfig'] = genCopy;
+    }
+    return copy;
+  }
+
+  String _bestFacebookCaption(String html) {
+    final candidates = [
+      _metaContent(html, 'og:image:alt'),
+      _metaContent(html, 'og:title'),
+      _metaName(html, 'twitter:image:alt'),
+      _metaContent(html, 'og:description'),
+      _metaName(html, 'description'),
+      _metaName(html, 'twitter:description'),
+    ]
+        .map(_stripFacebookViewsPrefix)
+        .map((e) => e.trim())
+        .where((e) => e.length >= 8)
+        .toList();
+
+    if (candidates.isEmpty) return '';
+
+    final complete =
+        candidates.where((e) => !_looksTruncatedCaption(e)).toList();
+    final pool = complete.isNotEmpty ? complete : candidates;
+    pool.sort((a, b) => b.length.compareTo(a.length));
+    return pool.first;
+  }
+
+  bool _looksTruncatedCaption(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return true;
+    return RegExp(r'\.\.\.\s*$').hasMatch(t) || t.endsWith('…');
+  }
+
+  String _stripFacebookViewsPrefix(String raw) {
+    var t = raw.replaceAll('\r', '').trim();
+    final parts = t
+        .split('|')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.length >= 2) {
+      final left = parts.first.toLowerCase();
+      if (RegExp(
+        r'(aufrufe|views|reaktionen|reactions|likes|kommentare|comments|shares)',
+      ).hasMatch(left)) {
+        t = parts.sublist(1).join(' | ').trim();
+      }
+    }
+    return t;
+  }
+
   String _cleanTitle(String title) {
     var t = title.replaceAll(RegExp(r'[\n\r]+'), '\n').trim();
     // Erste Zeile: Facebook packt oft Caption-Fortsetzung in og:title.
@@ -1387,6 +1483,13 @@ class RecipeExtractor {
     ).firstMatch(html);
     return match == null ? '' : _decodeHtml(match.group(1)!);
   }
+
+  @visibleForTesting
+  String bestFacebookCaptionForTest(String html) => _bestFacebookCaption(html);
+
+  @visibleForTesting
+  String stripFacebookViewsPrefixForTest(String raw) =>
+      _stripFacebookViewsPrefix(raw);
 
   String _decodeHtml(String value) {
     return value
