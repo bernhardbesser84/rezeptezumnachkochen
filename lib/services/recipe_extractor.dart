@@ -210,6 +210,12 @@ class RecipeExtractor {
       whisperTranscript: whisperTranscript,
     );
 
+    final hasSpokenSource = hasVideo ||
+        (autoTranscript != null && autoTranscript.trim().isNotEmpty) ||
+        (whisperTranscript != null && whisperTranscript.trim().isNotEmpty);
+    final captionMostlyIngredients =
+        captionLooksLikeIngredientsOnly(effectiveCaption);
+
     final combinedForAi = [
       'Aufgabe: Erstelle ein vollständiges, nachkochbares Rezept.',
       'Nutze ALLE folgenden Quellen gemeinsam (Video-Beschreibung, '
@@ -221,14 +227,30 @@ class RecipeExtractor {
           '(nicht „Hhnchen“ oder „Gemsebrhe“).',
       'Erfinde KEIN „klassisches Ersatzrezept“ (z. B. Frikadellen, '
           'irgendetwas Beliebtes), nur weil Details fehlen.',
-      'Fehlen Mengen/Zeiten/Schritte zum genannten Gericht: typische '
-          'Zubereitung genau für DIESES Gericht ergänzen und in notes '
-          'kurz vermerken, was geschätzt wurde.',
+      if (hasSpokenSource) ...[
+        'GESPROCHENER TON / VIDEO ist die HAUPTQUELLE für die Schritte.',
+        'Übernimm Reihenfolge, Tipps und Technik der sprechenden Person.',
+        'Die Caption oft nur für Zutaten und Mengen nutzen.',
+        'Nicht eine Standard-Zubereitung erfinden, die im Video so nicht vorkommt.',
+      ] else ...[
+        'Es gibt KEINEN gesprochenen Text und KEIN Video in den Quellen.',
+        if (captionMostlyIngredients)
+          'Die Caption enthält vermutlich nur Zutaten/Mengen, keine Zubereitung.',
+        'Für steps: KEINE detaillierte Kochshow aus dem Kopf erfinden.',
+        'Stattdessen kurze Platzhalter-Schritte '
+            '(z. B. „Wie im Video vorbereitet — bitte Video anhängen '
+            'oder Schritte selbst eintragen.“).',
+        'In notes klar schreiben: Die Zubereitung wird im Video gesprochen; '
+            'ohne Video/Ton kann sie nicht zuverlässig übernommen werden.',
+        'Zutaten und Mengen aus der Caption trotzdem so genau wie möglich übernehmen.',
+      ],
+      if (hasSpokenSource)
+        'Fehlen einzelne Mengen: nur für DIESES Gericht typisch ergänzen '
+            'und in notes als Schätzung markieren.',
       'Steht in den Quellen wirklich gar kein Gericht: dann title '
-          '„Rezept ergänzen“, kurze Platzhalter-Zutaten/Schritte und in '
-          'notes bitten, Caption oder Video nachzutragen.',
-      'Widersprüche: der klarere/aktuellere Hinweis gewinnt '
-          '(meist gesprochener Text + Caption).',
+          '„Rezept ergänzen“, kurze Platzhalter und in notes bitten, '
+          'Caption oder Video nachzutragen.',
+      'Widersprüche: gesprochener Text schlägt Caption.',
       'WICHTIG für title: klarer deutscher Gerichtsname. '
           'Niemals Plattformnamen wie Facebook, Instagram, TikTok oder '
           '„Rezept von …“ als Titel.',
@@ -548,9 +570,11 @@ class RecipeExtractor {
       'als title. '
       'Niemals ein anderes klassisches Rezept erfinden, nur weil der '
       'Link wenig Text enthält. '
-      'Nutze Caption, Transkript und Meta-Text gemeinsam. '
-      'Fehlende Mengen/Zeiten/Schritte nur für das genannte Gericht '
-      'sinnvoll ergänzen und in notes als Schätzung markieren. '
+      'Zubereitungsschritte: Nur aus gesprochenem Ton, Untertiteln '
+      'oder klarer Caption-Anleitung. '
+      'Wenn nur Zutatenliste ohne Ton/Video: keine erfundene Kochshow, '
+      'sondern kurze Platzhalter-Schritte und Hinweis in notes. '
+      'Nutze Caption vor allem für Zutaten/Mengen. '
       'Schreibe klare, kurze Kochschritte.';
 
   Future<Recipe> _extractWithAi({
@@ -605,8 +629,13 @@ class RecipeExtractor {
             'parts': [
               {
                 'text':
-                    'Im Anhang ist das Rezeptvideo (Bild + Ton). '
-                    'Berücksichtige Video, Ton und diesen Text:\n'
+                    'Im Anhang ist das Rezeptvideo (Bild + Ton).\n'
+                    'PRIORITÄT: Die gesprochenen Zubereitungsschritte der '
+                    'Person im Video sind maßgeblich — Reihenfolge und '
+                    'Technik genau übernehmen.\n'
+                    'Caption/Text vor allem für Zutaten und Mengen nutzen.\n'
+                    'Erfinde keine anderen Schritte als im Video erklärt.\n'
+                    'Zusätzlicher Text:\n'
                     '$combinedText',
               },
               {
@@ -1588,6 +1617,53 @@ class RecipeExtractor {
       caseSensitive: false,
     ).firstMatch(html);
     return match == null ? '' : _decodeHtml(match.group(1)!);
+  }
+
+  /// Caption hat Zutaten/Mengen, aber kaum eine gesprochene Anleitung.
+  bool captionLooksLikeIngredientsOnly(String caption) {
+    final lines = caption
+        .split(RegExp(r'[\n\r]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty && !e.startsWith('http'))
+        .toList();
+    if (lines.isEmpty) return true;
+
+    var ingredientLines = 0;
+    var stepLines = 0;
+    for (final line in lines) {
+      final lower = line.toLowerCase();
+      if (lower.contains('zubereitung') ||
+          lower.contains('anleitung') ||
+          lower.startsWith('schritt')) {
+        stepLines += 2;
+        continue;
+      }
+      if (_looksLikeIngredient(line) ||
+          RegExp(
+            r'\b(\d+[.,]?\d*\s*(g|kg|ml|l|el|tl)|prise|bund|zehe|stück)\b',
+            caseSensitive: false,
+          ).hasMatch(line)) {
+        ingredientLines++;
+        continue;
+      }
+      if (_looksLikeStep(line)) {
+        stepLines++;
+      }
+    }
+
+    // Typisch Facebook: viele Mengenzeilen, kaum echte Schritte.
+    if (ingredientLines >= 2 && stepLines == 0) return true;
+    if (ingredientLines >= 3 && stepLines <= 1) return true;
+    if (lines.length <= 6 && ingredientLines >= 1 && stepLines == 0) {
+      // Kurze Caption ohne Kochverben → oft nur Marketing + Zutaten.
+      final joined = caption.toLowerCase();
+      final hasCookVerb = RegExp(
+        r'\b(braten|kochen|schneiden|rühren|backen|würzen|anbraten|'
+        r'köcheln|verühren|schalen|hacken|dünsten)\b',
+      ).hasMatch(joined);
+      if (!hasCookVerb) return true;
+    }
+    return false;
   }
 
   @visibleForTesting

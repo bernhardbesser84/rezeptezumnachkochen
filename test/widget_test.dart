@@ -236,6 +236,29 @@ Lange Caption ohne Abschneidung mit Zutatenhinweis und Hashtags." />
     expect(recipe.notes, contains('geschätzt'));
   });
 
+  test('Caption mit nur Zutaten wird erkannt', () {
+    final extractor = RecipeExtractor();
+    expect(
+      extractor.captionLooksLikeIngredientsOnly('''
+High Protein Bowl
+500 g Hähnchenbrust
+200 g Reis
+150 ml Gemüsebrühe
+1 Zwiebel
+'''),
+      isTrue,
+    );
+    expect(
+      extractor.captionLooksLikeIngredientsOnly('''
+Zubereitung:
+1. Zwiebel anbraten.
+2. Hähnchen scharf anbraten.
+3. Reis dazugeben und köcheln.
+'''),
+      isFalse,
+    );
+  });
+
   test('Manuelles Rezept speichert Zutaten und Schritte', () {
     final extractor = RecipeExtractor();
     final recipe = extractor.buildManualRecipe(
