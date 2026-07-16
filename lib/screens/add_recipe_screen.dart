@@ -252,6 +252,47 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   }
 
   Future<void> _createRecipe() async {
+    final linkOrText = _linkController.text.trim();
+    final caption = _captionController.text.trim();
+    final needsVideoForSteps = _videoBytes == null &&
+        widget.extractor.captionLooksLikeIngredientsOnly(caption);
+
+    if (needsVideoForSteps) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Video für die Zubereitung'),
+          content: const Text(
+            'In der Caption stehen meist nur die Zutaten. '
+            'Die Zubereitung erklärt die Person im Video gesprochen.\n\n'
+            'Ohne Video kann die KI die Schritte nicht richtig übernehmen '
+            'und rät oft daneben.\n\n'
+            'Am besten: Video anhängen (Gemini), dann nochmal erstellen.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'cancel'),
+              child: const Text('Abbrechen'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'without'),
+              child: const Text('Trotzdem ohne Video'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'attach'),
+              child: const Text('Video wählen'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (choice == null || choice == 'cancel') return;
+      if (choice == 'attach') {
+        await _pickVideo(ImageSource.gallery);
+        return;
+      }
+    }
+
     setState(() {
       _loading = true;
       _error = null;
@@ -263,8 +304,6 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     try {
       final provider = await widget.repository.storage.getAiProvider();
       final apiKey = await widget.repository.storage.getApiKey();
-      final linkOrText = _linkController.text.trim();
-      final caption = _captionController.text.trim();
       final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(linkOrText);
       final url = urlMatch?.group(0);
 
@@ -294,6 +333,16 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             content: Text(
               'KI nicht erreichbar — Rezept trotzdem ohne KI angelegt. '
               'Du kannst es danach ergänzen.',
+            ),
+          ),
+        );
+      } else if (_videoBytes == null &&
+          recipe.notes?.toLowerCase().contains('video') == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Zutaten übernommen. Für echte Videoschritte bitte '
+              'nächstes Mal das Video anhängen.',
             ),
           ),
         );
@@ -451,6 +500,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             controller: _captionController,
             minLines: 5,
             maxLines: 12,
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               labelText: 'Text unter dem Video (Caption)',
               hintText:
@@ -483,20 +533,47 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             label: const Text('Caption manuell einfügen'),
           ),
           const SizedBox(height: 16),
-          const Text(
-            'Video mit Ton (optional)',
-            style: TextStyle(fontWeight: FontWeight.w700),
+          Text(
+            _videoBytes == null
+                ? 'Video mit Ton (wichtig für die Zubereitung)'
+                : 'Video mit Ton',
+            style: const TextStyle(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 6),
-          const Text(
-            'Damit die KI auch das Gehörte auswertet. '
-            'Am besten mit Gemini-Schlüssel. Kurz halten (unter 3 Min.).',
+          Text(
+            _videoBytes == null
+                ? 'In der Caption stehen oft nur die Zutaten. '
+                    'Die Schritte erklärt die Person gesprochen im Video — '
+                    'deshalb Video anhängen (am besten mit Gemini). '
+                    'Kurz halten (unter 3 Min.).'
+                : 'Video ist angehängt. Die KI wertet Ton + Bild + Caption aus.',
           ),
+          if (_videoBytes == null &&
+              widget.extractor.captionLooksLikeIngredientsOnly(
+                _captionController.text,
+              )) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.accentSoft,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: AppTheme.accent.withValues(alpha: 0.25),
+                ),
+              ),
+              child: const Text(
+                'Hinweis: Diese Caption wirkt wie eine Zutatenliste. '
+                'Ohne Video werden die gesprochenen Schritte oft falsch geraten.',
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
-                child: FilledButton.tonalIcon(
+                child: FilledButton.icon(
                   onPressed:
                       _loading ? null : () => _pickVideo(ImageSource.gallery),
                   icon: const Icon(Icons.video_library),
@@ -593,9 +670,9 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Tipp: YouTube-Captions klappen oft automatisch. '
-            'Bei Instagram/TikTok sperren die Plattformen manchmal den Text — '
-            'dann einmal manuell kopieren. Die KI ergänzt danach fehlende Mengen.',
+            'Tipp: Zutaten stehen oft in der Caption — die Zubereitung '
+            'wird meist gesprochen. Dann Video anhängen (Gemini). '
+            'YouTube liefert oft Untertitel automatisch.',
           ),
         ],
       ),
