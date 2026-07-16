@@ -199,6 +199,43 @@ Lange Caption ohne Abschneidung mit Zutatenhinweis und Hashtags." />
     expect(caption.endsWith('...'), isFalse);
   });
 
+  test('Fehlende Umlaute in KI-Text werden korrigiert', () {
+    final extractor = RecipeExtractor();
+    final fixed = extractor.fixGermanSpellingForTest(
+      'Hhnchen Reis One Pot. 150ml Gemsebrhe, Hirtenkse. '
+      'In einer groen Pfanne wrzen und fr 15 Min. kcheln. '
+      'Zubereitung wurde geschtzt.',
+    );
+    expect(fixed, contains('Hähnchen'));
+    expect(fixed, contains('Gemüsebrühe'));
+    expect(fixed, contains('Hirtenkäse'));
+    expect(fixed, contains('großen'));
+    expect(fixed, contains('würzen'));
+    expect(fixed, contains('für'));
+    expect(fixed, contains('köcheln'));
+    expect(fixed, contains('geschätzt'));
+    expect(fixed.contains('Hhnchen'), isFalse);
+  });
+
+  test('KI-JSON mit fehlenden Umlauten wird beim Parsen repariert', () {
+    final extractor = RecipeExtractor();
+    final recipe = extractor.parseAiRecipeJson('''
+{
+  "title": "Hhnchen Reis One Pot",
+  "servings": "4",
+  "prepTimeMinutes": 30,
+  "ingredients": ["500g Hhnchenbrustfilet", "150ml Gemsebrhe"],
+  "steps": ["Hhnchenfleisch in groen Pfanne wrzen."],
+  "notes": "Zeiten wurden geschtzt."
+}
+''');
+    expect(recipe.title, contains('Hähnchen'));
+    expect(recipe.ingredients.first, contains('Hähnchenbrustfilet'));
+    expect(recipe.ingredients.last, contains('Gemüsebrühe'));
+    expect(recipe.steps.first, contains('würzen'));
+    expect(recipe.notes, contains('geschätzt'));
+  });
+
   test('Manuelles Rezept speichert Zutaten und Schritte', () {
     final extractor = RecipeExtractor();
     final recipe = extractor.buildManualRecipe(

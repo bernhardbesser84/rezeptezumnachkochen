@@ -217,6 +217,8 @@ class RecipeExtractor {
       'WICHTIG: Erfinde KEIN anderes Gericht. Wenn Quellen einen '
           'Gerichtsnamen nennen (z. B. „High Protein Döner Wrap“), '
           'muss title genau dazu passen.',
+      'Schreibe korrektes Deutsch mit ä, ö, ü und ß '
+          '(nicht „Hhnchen“ oder „Gemsebrhe“).',
       'Erfinde KEIN „klassisches Ersatzrezept“ (z. B. Frikadellen, '
           'irgendetwas Beliebtes), nur weil Details fehlen.',
       'Fehlen Mengen/Zeiten/Schritte zum genannten Gericht: typische '
@@ -399,7 +401,7 @@ class RecipeExtractor {
       );
     }
 
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final body = jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
     final content =
         (body['choices'] as List).first['message']['content'] as String;
     return _recipeFromAiJson(content, '');
@@ -479,7 +481,7 @@ class RecipeExtractor {
       );
     }
 
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final body = jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
     final content = body['content'] as List?;
     if (content == null || content.isEmpty) {
       throw Exception('Claude hat keine Antwort geliefert. Bitte erneut versuchen.');
@@ -536,7 +538,10 @@ class RecipeExtractor {
       'prepTimeMinutes (number|null), '
       'ingredients (string[]), steps (string[]), '
       'notes (string|null). '
-      'Sprache: Deutsch. '
+      'Sprache: korrektes Deutsch mit Umlauten. '
+      'WICHTIG: Immer ä, ö, ü und ß schreiben. '
+      'Falsch: „Hhnchen“, „Gemsebrhe“, „Hirtenkse“, „fr“, „geschtzt“. '
+      'Richtig: „Hähnchen“, „Gemüsebrühe“, „Hirtenkäse“, „für“, „geschätzt“. '
       'title MUSS dem Gericht aus den Quellen entsprechen '
       '(z. B. „High Protein Döner Wrap“, „Knoblauch-Garnelen“). '
       'Niemals Facebook/Instagram/TikTok/YouTube oder „Rezept von …“ '
@@ -650,7 +655,7 @@ class RecipeExtractor {
       );
     }
 
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final body = jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
     final content =
         (body['choices'] as List).first['message']['content'] as String;
     return _recipeFromAiJson(content, sourceUrl);
@@ -715,7 +720,7 @@ class RecipeExtractor {
       );
     }
 
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final body = jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
     final content = body['content'] as List?;
     if (content == null || content.isEmpty) {
       throw Exception('Claude hat keine Antwort geliefert. Bitte erneut versuchen.');
@@ -799,10 +804,11 @@ class RecipeExtractor {
               .post(
                 uri,
                 headers: {
-                  'Content-Type': 'application/json',
+                  'Content-Type': 'application/json; charset=utf-8',
                   'x-goog-api-key': apiKey,
+                  'Accept': 'application/json',
                 },
-                body: jsonEncode(requestPayload),
+                body: utf8.encode(jsonEncode(requestPayload)),
               )
               .timeout(timeout);
         } catch (e) {
@@ -816,7 +822,7 @@ class RecipeExtractor {
         }
 
         if (response.statusCode >= 200 && response.statusCode < 300) {
-          return jsonDecode(response.body) as Map<String, dynamic>;
+          return jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
         }
 
         final retriable = response.statusCode == 429 ||
@@ -829,7 +835,7 @@ class RecipeExtractor {
           _aiErrorMessage(
             AiProvider.gemini,
             response.statusCode,
-            response.body,
+            _utf8Body(response),
           ),
         );
 
@@ -944,7 +950,7 @@ class RecipeExtractor {
     final parsed = _decodeAiJsonObject(raw);
 
     var title = (parsed['title'] as String?)?.trim() ?? '';
-    title = _cleanTitle(_stripPlatformSuffix(title));
+    title = _fixGermanSpelling(_cleanTitle(_stripPlatformSuffix(title)));
     if (title.isEmpty || _isUselessDishTitle(title)) {
       title = 'Neues Rezept';
     }
@@ -954,20 +960,22 @@ class RecipeExtractor {
         ? null
         : servingsRaw.toString().trim().isEmpty
             ? null
-            : servingsRaw.toString().trim();
+            : _fixGermanSpelling(servingsRaw.toString().trim());
 
     final notesRaw = parsed['notes'];
     final notes = notesRaw == null
         ? null
         : notesRaw.toString().trim().isEmpty
             ? null
-            : notesRaw.toString().trim();
+            : _fixGermanSpelling(notesRaw.toString().trim());
 
     return Recipe(
       id: _uuid.v4(),
       title: title,
-      ingredients: _asStringList(parsed['ingredients']),
-      steps: _asStringList(parsed['steps']),
+      ingredients: _asStringList(parsed['ingredients'])
+          .map(_fixGermanSpelling)
+          .toList(),
+      steps: _asStringList(parsed['steps']).map(_fixGermanSpelling).toList(),
       sourceUrl: sourceUrl,
       createdAt: DateTime.now(),
       servings: servings,
@@ -976,6 +984,104 @@ class RecipeExtractor {
           : int.tryParse('${parsed['prepTimeMinutes']}'),
       notes: notes,
     );
+  }
+
+  /// Antwort immer als UTF-8 lesen (sonst fehlen Umlaute auf manchen Geräten).
+  String _utf8Body(http.Response response) {
+    return utf8.decode(response.bodyBytes, allowMalformed: true);
+  }
+
+  /// Häufige KI-Fehler ohne Umlaute korrigieren (Hhnchen → Hähnchen).
+  @visibleForTesting
+  String fixGermanSpellingForTest(String text) => _fixGermanSpelling(text);
+
+  String _fixGermanSpelling(String text) {
+    if (text.isEmpty) return text;
+    var out = text;
+
+    // Längere / spezifischere Ersetzungen zuerst.
+    const replacements = <String, String>{
+      'Hhnchenbrustfilet': 'Hähnchenbrustfilet',
+      'hhnchenbrustfilet': 'Hähnchenbrustfilet',
+      'Hhnchenfleisch': 'Hähnchenfleisch',
+      'hhnchenfleisch': 'Hähnchenfleisch',
+      'Hhnchenbrust': 'Hähnchenbrust',
+      'Hhnchen': 'Hähnchen',
+      'hhnchen': 'hähnchen',
+      'H hnchen': 'Hähnchen',
+      'h hnchen': 'hähnchen',
+      'Gemsebrhe': 'Gemüsebrühe',
+      'gemsebrhe': 'Gemüsebrühe',
+      'Gemse': 'Gemüse',
+      'gemse': 'Gemüse',
+      'Hirtenkse': 'Hirtenkäse',
+      'hirtenkse': 'Hirtenkäse',
+      'Schafskse': 'Schafskäse',
+      'Frischkse': 'Frischkäse',
+      'Reibekse': 'Reibekäse',
+      'Olivenl': 'Olivenöl',
+      'olivenl': 'Olivenöl',
+      'Sonnenblumenl': 'Sonnenblumenöl',
+      'Rapsel': 'Rapsöl',
+      'Mehlschwitze': 'Mehlschwitze',
+      'geschtzt': 'geschätzt',
+      'Geschtzt': 'Geschätzt',
+      'zerbrseln': 'zerbröseln',
+      'Zerbrseln': 'Zerbröseln',
+      'unterrhren': 'unterrühren',
+      'Unterrhren': 'Unterrühren',
+      'andnsten': 'andünsten',
+      'Andnsten': 'Andünsten',
+      'anbraten': 'anbraten',
+      'Flssigkeit': 'Flüssigkeit',
+      'flssigkeit': 'Flüssigkeit',
+      'kcheln': 'köcheln',
+      'Kcheln': 'Köcheln',
+      'wrzen': 'würzen',
+      'Wrzen': 'Würzen',
+      'abgeschmeckt': 'abgeschmeckt',
+      'Zwiebelwfel': 'Zwiebelwürfel',
+      'mundgerechte Stcke': 'mundgerechte Stücke',
+      'Stcke': 'Stücke',
+      'stcke': 'Stücke',
+      'groen': 'großen',
+      'Groen': 'Großen',
+      'groe ': 'große ',
+      'Groe ': 'Große ',
+      'Dner': 'Döner',
+      'dner': 'Döner',
+      'D ner': 'Döner',
+      'berbacken': 'überbacken',
+      'berbrhen': 'überbrühen',
+      'berall': 'überall',
+      'hinzufgen': 'hinzufügen',
+      'Hinzufgen': 'Hinzufügen',
+      'glasiert': 'glasiert',
+      'schwenken': 'schwenken',
+      'nchsten': 'nächsten',
+      'Nchsten': 'Nächsten',
+      'gertet': 'gerätet',
+      'Kse ': 'Käse ',
+      ' kse': ' Käse',
+      'Kse.': 'Käse.',
+      'Kse,': 'Käse,',
+    };
+
+    for (final entry in replacements.entries) {
+      out = out.replaceAll(entry.key, entry.value);
+    }
+
+    // Häufiges kleines Wort „fr“ → „für“ (nur als ganzes Wort).
+    out = out.replaceAllMapped(
+      RegExp(r'\bfr\b'),
+      (_) => 'für',
+    );
+    out = out.replaceAllMapped(
+      RegExp(r'\bFr\b'),
+      (_) => 'Für',
+    );
+
+    return out;
   }
 
   Recipe _extractLocally({
@@ -1496,16 +1602,26 @@ class RecipeExtractor {
         .replaceAll('&amp;', '&')
         .replaceAll('&quot;', '"')
         .replaceAll('&#39;', "'")
+        .replaceAll('&apos;', "'")
         .replaceAll('&lt;', '<')
         .replaceAll('&gt;', '>')
         .replaceAll('&nbsp;', ' ')
+        .replaceAll('&auml;', 'ä')
+        .replaceAll('&ouml;', 'ö')
+        .replaceAll('&uuml;', 'ü')
+        .replaceAll('&Auml;', 'Ä')
+        .replaceAll('&Ouml;', 'Ö')
+        .replaceAll('&Uuml;', 'Ü')
+        .replaceAll('&szlig;', 'ß')
         .replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (m) {
           final code = int.tryParse(m.group(1)!, radix: 16);
-          return code == null ? m.group(0)! : String.fromCharCode(code);
+          if (code == null) return m.group(0)!;
+          return String.fromCharCodes([code]);
         })
         .replaceAllMapped(RegExp(r'&#(\d+);'), (m) {
           final code = int.tryParse(m.group(1)!);
-          return code == null ? m.group(0)! : String.fromCharCode(code);
+          if (code == null) return m.group(0)!;
+          return String.fromCharCodes([code]);
         });
   }
 }
