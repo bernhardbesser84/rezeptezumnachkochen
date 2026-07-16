@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -159,8 +157,9 @@ class VideoLinkFetcher {
   }
 
   String? _extractMp4Url(String html) {
+    // Keine Anführungszeichen/Leerzeichen/Tags in der URL.
     final matches = RegExp(
-      r'https?:\\?/\\?/[^"\' <>]+?\.mp4[^"\'<>]*',
+      r'https?:\\?/\\?/[^\s"<>]+?\.mp4[^\s"<>]*',
       caseSensitive: false,
     ).allMatches(html);
     if (matches.isEmpty) return null;
