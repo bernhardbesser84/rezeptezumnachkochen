@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../services/app_repository.dart';
 import '../services/caption_fetcher.dart';
 import '../services/recipe_extractor.dart';
+import '../services/video_link_fetcher.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
 import 'manual_recipe_screen.dart';
@@ -38,9 +39,11 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   late final TextEditingController _captionController;
   final _picker = ImagePicker();
   late final CaptionFetcher _captionFetcher;
+  late final VideoLinkFetcher _videoLinkFetcher;
 
   bool _loading = false;
   bool _fetchingCaption = false;
+  bool _fetchingVideo = false;
   bool _alsoShopping = true;
   bool _useAi = true;
   bool _hasApiKey = false;
@@ -72,6 +75,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     _videoMimeType = widget.initialVideoMimeType;
     _videoName = widget.initialVideoName;
     _captionFetcher = CaptionFetcher(extractor: widget.extractor);
+    _videoLinkFetcher = VideoLinkFetcher();
     _loadKeyState();
 
     // Link schon da, Caption noch leer → automatisch versuchen zu laden.
@@ -81,7 +85,32 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         if (!mounted) return;
         _loadCaptionFromLink(silentIfEmpty: true);
       });
+    } else if (_videoBytes == null) {
+      // Caption schon da (z. B. geteilt) → bei Facebook Video nachholen.
+      final url = _extractLinkUrl();
+      if (url != null && _looksLikeFacebookUrl(url)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _videoBytes != null) return;
+          _loadVideoFromLink(silent: true);
+        });
+      }
     }
+  }
+
+  bool _looksLikeFacebookUrl(String raw) {
+    final host = Uri.tryParse(raw.trim())?.host.toLowerCase() ?? '';
+    return host.contains('facebook.com') ||
+        host == 'fb.watch' ||
+        host == 'fb.com' ||
+        host.endsWith('.facebook.com');
+  }
+
+  String? _extractLinkUrl() {
+    final raw = _linkController.text.trim();
+    final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(raw);
+    final url = urlMatch?.group(0) ?? raw;
+    if (!url.startsWith('http')) return null;
+    return url;
   }
 
   Future<void> _loadKeyState() async {
@@ -185,12 +214,67 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             'Bitte kurz prüfen, dann Anleitung erstellen.';
         _error = null;
       });
+
+      // Facebook: Zubereitung ist gesprochen → Video vom Link nachladen.
+      if (_videoBytes == null && _looksLikeFacebookUrl(url)) {
+        await _loadVideoFromLink(silent: true);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _fetchingCaption = false;
         _info = null;
         _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  Future<void> _loadVideoFromLink({bool silent = false}) async {
+    final url = _extractLinkUrl();
+    if (url == null) {
+      if (!silent) {
+        setState(() {
+          _error = 'Bitte zuerst einen Video-Link einfügen.';
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _fetchingVideo = true;
+      _error = null;
+      _info = 'Video wird vom Link geladen…';
+    });
+
+    try {
+      final video = await _videoLinkFetcher.fetchFromUrl(url);
+      if (!mounted) return;
+      setState(() {
+        _videoBytes = video.bytes;
+        _videoMimeType = video.mimeType;
+        _videoName = video.fileName;
+        _fetchingVideo = false;
+        _info =
+            'Video vom Link geladen '
+            '(${(video.bytes.length / 1024 / 1024).toStringAsFixed(1)} MB). '
+            'KI kann Ton + Bild auswerten.';
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final message = e.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _fetchingVideo = false;
+        if (silent) {
+          _info =
+              'Caption ist da. Video vom Link ging nicht automatisch — '
+              'du kannst „Video vom Link laden“ nochmal tippen '
+              'oder die Datei speichern und unter „Video wählen“ anhängen.';
+          _error = null;
+        } else {
+          _info = null;
+          _error = message;
+        }
       });
     }
   }
@@ -258,16 +342,17 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         widget.extractor.captionLooksLikeIngredientsOnly(caption);
 
     if (needsVideoForSteps) {
+      final hasLink = _extractLinkUrl() != null;
       final choice = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Video für die Zubereitung'),
-          content: const Text(
+          content: Text(
             'In der Caption stehen meist nur die Zutaten. '
             'Die Zubereitung erklärt die Person im Video gesprochen.\n\n'
             'Ohne Video kann die KI die Schritte nicht richtig übernehmen '
             'und rät oft daneben.\n\n'
-            'Am besten: Video anhängen (Gemini), dann nochmal erstellen.',
+            '${hasLink ? 'Am besten: Video vom Link laden, dann nochmal erstellen.' : 'Am besten: Video anhängen (Gemini), dann nochmal erstellen.'}',
           ),
           actions: [
             TextButton(
@@ -278,15 +363,25 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
               onPressed: () => Navigator.pop(context, 'without'),
               child: const Text('Trotzdem ohne Video'),
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, 'attach'),
-              child: const Text('Video wählen'),
-            ),
+            if (hasLink)
+              FilledButton(
+                onPressed: () => Navigator.pop(context, 'from_link'),
+                child: const Text('Video vom Link'),
+              )
+            else
+              FilledButton(
+                onPressed: () => Navigator.pop(context, 'attach'),
+                child: const Text('Video wählen'),
+              ),
           ],
         ),
       );
       if (!mounted) return;
       if (choice == null || choice == 'cancel') return;
+      if (choice == 'from_link') {
+        await _loadVideoFromLink();
+        return;
+      }
       if (choice == 'attach') {
         await _pickVideo(ImageSource.gallery);
         return;
@@ -443,18 +538,16 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                       ? '1. Video-Link einfügen.\n'
                           '2. Caption wird oft automatisch geladen '
                           '(Button „Caption vom Link laden“).\n'
-                          '3. Optional: Video-Datei anhängen.\n'
+                          '3. Video vom Link laden (wichtig für gesprochene Schritte).\n'
                           '4. Anleitung erstellen — fehlende Mengen ergänzt die KI.\n\n'
-                          'Tipp Facebook: Wenn die Caption leer bleibt, '
-                          'kopiere den Text unter dem Reel manuell — '
-                          'sonst rät die KI leicht daneben.'
+                          'Tipp Facebook: Wenn Caption oder Video leer bleibt, '
+                          'Text kopieren bzw. Video speichern und manuell anhängen.'
                       : '1. Video teilen oder Link einfügen.\n'
                           '2. Caption vom Link laden (oder selbst einfügen).\n'
-                          '3. Optional Video anhängen für Ton + Bild.\n'
+                          '3. Video vom Link laden für Ton + Bild.\n'
                           '4. Anleitung erstellen — fehlende Infos ergänzt die KI.\n\n'
-                          'Tipp Facebook: Wenn die Caption leer bleibt, '
-                          'kopiere den Text unter dem Reel manuell — '
-                          'sonst rät die KI leicht daneben.',
+                          'Tipp Facebook: Wenn Caption oder Video leer bleibt, '
+                          'Text kopieren bzw. Video speichern und manuell anhängen.',
                 ),
               ],
             ),
@@ -491,7 +584,9 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
-            onPressed: (_loading || _fetchingCaption) ? null : _pasteLink,
+            onPressed: (_loading || _fetchingCaption || _fetchingVideo)
+                ? null
+                : _pasteLink,
             icon: const Icon(Icons.content_paste),
             label: const Text('Link einfügen'),
           ),
@@ -510,7 +605,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 8),
           FilledButton.tonalIcon(
-            onPressed: (_loading || _fetchingCaption)
+            onPressed: (_loading || _fetchingCaption || _fetchingVideo)
                 ? null
                 : () => _loadCaptionFromLink(),
             icon: _fetchingCaption
@@ -528,7 +623,9 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
-            onPressed: (_loading || _fetchingCaption) ? null : _pasteCaption,
+            onPressed: (_loading || _fetchingCaption || _fetchingVideo)
+                ? null
+                : _pasteCaption,
             icon: const Icon(Icons.notes),
             label: const Text('Caption manuell einfügen'),
           ),
@@ -544,7 +641,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             _videoBytes == null
                 ? 'In der Caption stehen oft nur die Zutaten. '
                     'Die Schritte erklärt die Person gesprochen im Video — '
-                    'deshalb Video anhängen (am besten mit Gemini). '
+                    'am einfachsten: „Video vom Link laden“ tippen. '
                     'Kurz halten (unter 3 Min.).'
                 : 'Video ist angehängt. Die KI wertet Ton + Bild + Caption aus.',
           ),
@@ -570,12 +667,31 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             ),
           ],
           const SizedBox(height: 8),
+          FilledButton.tonalIcon(
+            onPressed: (_loading || _fetchingCaption || _fetchingVideo)
+                ? null
+                : () => _loadVideoFromLink(),
+            icon: _fetchingVideo
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.cloud_download),
+            label: Text(
+              _fetchingVideo
+                  ? 'Video wird vom Link geladen…'
+                  : 'Video vom Link laden',
+            ),
+          ),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: FilledButton.icon(
-                  onPressed:
-                      _loading ? null : () => _pickVideo(ImageSource.gallery),
+                  onPressed: (_loading || _fetchingVideo)
+                      ? null
+                      : () => _pickVideo(ImageSource.gallery),
                   icon: const Icon(Icons.video_library),
                   label: const Text('Video wählen'),
                 ),
@@ -584,8 +700,9 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed:
-                        _loading ? null : () => _pickVideo(ImageSource.camera),
+                    onPressed: (_loading || _fetchingVideo)
+                        ? null
+                        : () => _pickVideo(ImageSource.camera),
                     icon: const Icon(Icons.videocam),
                     label: const Text('Aufnehmen'),
                   ),
@@ -606,7 +723,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                   ),
                 ),
                 TextButton(
-                  onPressed: _loading
+                  onPressed: (_loading || _fetchingVideo)
                       ? null
                       : () => setState(() {
                             _videoBytes = null;
@@ -624,7 +741,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             contentPadding: EdgeInsets.zero,
             title: const Text('Zutaten gleich auf die Einkaufsliste'),
             value: _alsoShopping,
-            onChanged: _loading
+            onChanged: (_loading || _fetchingVideo)
                 ? null
                 : (value) => setState(() => _alsoShopping = value),
           ),
@@ -637,7 +754,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                   : 'Ohne Schlüssel: einfache Auswertung ohne Video-Ton.',
             ),
             value: _useAi && _hasApiKey,
-            onChanged: (!_hasApiKey || _loading)
+            onChanged: (!_hasApiKey || _loading || _fetchingVideo)
                 ? null
                 : (value) => setState(() => _useAi = value),
           ),
@@ -656,7 +773,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
               ),
             ),
           FilledButton.icon(
-            onPressed: _loading ? null : _createRecipe,
+            onPressed: (_loading || _fetchingVideo) ? null : _createRecipe,
             icon: _loading
                 ? const SizedBox(
                     width: 18,
@@ -671,7 +788,8 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           const SizedBox(height: 12),
           const Text(
             'Tipp: Zutaten stehen oft in der Caption — die Zubereitung '
-            'wird meist gesprochen. Dann Video anhängen (Gemini). '
+            'wird meist gesprochen. Dann „Video vom Link laden“ '
+            '(oder Datei speichern und „Video wählen“). '
             'YouTube liefert oft Untertitel automatisch.',
           ),
         ],
