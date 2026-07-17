@@ -53,6 +53,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   Uint8List? _videoBytes;
   String? _videoMimeType;
   String? _videoName;
+  bool _videoLinkFetchAttempted = false;
 
   @override
   void initState() {
@@ -229,7 +230,20 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     }
   }
 
-  Future<void> _loadVideoFromLink({bool silent = false}) async {
+  Future<void> _loadVideoFromLink({bool silent = false, bool force = false}) async {
+    if (_fetchingVideo || _videoBytes != null) return;
+    if (_videoLinkFetchAttempted && !force) {
+      if (!silent && mounted) {
+        setState(() {
+          _info = null;
+          _error =
+              'Video vom Link wurde schon versucht. '
+              'Bitte „Video wählen“ oder später erneut „Video vom Link laden“.';
+        });
+      }
+      return;
+    }
+
     final url = _extractLinkUrl();
     if (url == null) {
       if (!silent) {
@@ -239,6 +253,8 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
       }
       return;
     }
+
+    _videoLinkFetchAttempted = true;
 
     setState(() {
       _fetchingVideo = true;
@@ -379,7 +395,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
       if (!mounted) return;
       if (choice == null || choice == 'cancel') return;
       if (choice == 'from_link') {
-        await _loadVideoFromLink();
+        await _loadVideoFromLink(force: true);
         return;
       }
       if (choice == 'attach') {
@@ -670,7 +686,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           FilledButton.tonalIcon(
             onPressed: (_loading || _fetchingCaption || _fetchingVideo)
                 ? null
-                : () => _loadVideoFromLink(),
+                : () => _loadVideoFromLink(force: true),
             icon: _fetchingVideo
                 ? const SizedBox(
                     width: 18,

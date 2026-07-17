@@ -765,12 +765,15 @@ class RecipeExtractor {
     return _recipeFromAiJson(text, sourceUrl);
   }
 
-  /// Modelle der Reihe nach — bei 503/Überlastung das nächste versuchen.
+  /// Modelle der Reihe nach — bei 404 das nächste versuchen (max. wenige Anfragen).
   static const _geminiModels = <String>[
-    'gemini-3.5-flash',
-    'gemini-2.5-flash',
     'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
   ];
+
+  /// Pro Rezept-Erstellung höchstens so viele Gemini-HTTP-Anfragen.
+  static const _maxGeminiRequestsPerRecipe = 3;
 
   /// Gemini-JSON-Config: festes Schema + wenig „Mitdenken“,
   /// damit die Antwort nicht kaputt gemischt wird.
@@ -811,16 +814,20 @@ class RecipeExtractor {
     };
   }
 
-  /// Gemini mit Retry (503/429) und Ersatz-Modellen.
+  /// Gemini: wenige Versuche — kein 9×-Retry mit erneutem Video-Upload.
   Future<Map<String, dynamic>> _postGeminiGenerateContent({
     required String apiKey,
     required Map<String, dynamic> payload,
     required Duration timeout,
   }) async {
     Exception? lastError;
+    var requestsMade = 0;
 
     for (final model in _geminiModels) {
-      for (var attempt = 0; attempt < 3; attempt++) {
+      var serverRetriesLeft = 1;
+
+      while (requestsMade < _maxGeminiRequestsPerRecipe) {
+        requestsMade++;
         final uri = Uri.parse(
           'https://generativelanguage.googleapis.com/v1beta/models/'
           '$model:generateContent',
@@ -840,39 +847,53 @@ class RecipeExtractor {
                 body: utf8.encode(jsonEncode(requestPayload)),
               )
               .timeout(timeout);
-        } catch (e) {
+        } catch (_) {
           lastError = Exception(
             'Gemini-Netzwerkfehler. Bitte Verbindung prüfen und erneut versuchen.',
           );
-          await Future<void>.delayed(
-            Duration(milliseconds: 700 * (attempt + 1)),
-          );
-          continue;
+          if (requestsMade < _maxGeminiRequestsPerRecipe) {
+            await Future<void>.delayed(const Duration(seconds: 1));
+            continue;
+          }
+          throw lastError;
         }
 
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
         }
 
-        final retriable = response.statusCode == 429 ||
-            response.statusCode == 500 ||
+        final body = _utf8Body(response);
+        lastError = Exception(
+          _aiErrorMessage(AiProvider.gemini, response.statusCode, body),
+        );
+
+        // 429 oder leeres Kontingent: sofort stoppen (Free-Tier verträgt kein Karussell).
+        if (response.statusCode == 429 || _isQuotaOrBillingExhausted(body)) {
+          throw lastError;
+        }
+
+        if (response.statusCode == 404) {
+          break;
+        }
+
+        final retriableServer = response.statusCode == 500 ||
             response.statusCode == 502 ||
             response.statusCode == 503;
-        final modelMissing = response.statusCode == 404;
 
-        lastError = Exception(
-          _aiErrorMessage(
-            AiProvider.gemini,
-            response.statusCode,
-            _utf8Body(response),
-          ),
-        );
+        if (retriableServer &&
+            serverRetriesLeft > 0 &&
+            requestsMade < _maxGeminiRequestsPerRecipe) {
+          serverRetriesLeft--;
+          final wait = _retryAfterSeconds(response.headers) ?? 2;
+          await Future<void>.delayed(Duration(seconds: wait));
+          continue;
+        }
 
-        if (modelMissing) break; // nächstes Modell
-        if (!retriable) throw lastError;
-        await Future<void>.delayed(
-          Duration(milliseconds: 700 * (attempt + 1)),
-        );
+        if (retriableServer) {
+          break;
+        }
+
+        throw lastError;
       }
     }
 
@@ -880,6 +901,21 @@ class RecipeExtractor {
         Exception(
           'Gemini ist gerade nicht erreichbar. Bitte später erneut versuchen.',
         );
+  }
+
+  bool _isQuotaOrBillingExhausted(String body) {
+    final lower = body.toLowerCase();
+    return lower.contains('resource_exhausted') ||
+        lower.contains('insufficient_quota') ||
+        lower.contains('exceeded your current quota') ||
+        lower.contains('quota exceeded') ||
+        lower.contains('billing');
+  }
+
+  int? _retryAfterSeconds(Map<String, String> headers) {
+    final raw = headers['retry-after']?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return int.tryParse(raw);
   }
 
   /// Nur den echten Antwort-Text nehmen — Denk-Texte von Gemini ignorieren.
@@ -1277,6 +1313,13 @@ class RecipeExtractor {
         return '$name-Schlüssel ungültig oder ohne Berechtigung. '
             'Bitte unter Einstellungen prüfen und neu speichern.';
       case 429:
+        if (provider == AiProvider.gemini) {
+          return 'Gemini-Limit erreicht (429). Beim kostenlosen Tarif sind '
+              'nur wenige Anfragen pro Minute und pro Tag möglich '
+              '(oft ca. 5/Minute, 20/Tag). '
+              'Bitte 1–2 Minuten warten oder in Google AI Studio '
+              'Abrechnung aktivieren (Pay-as-you-go) für höhere Limits.';
+        }
         if (quotaEmpty) {
           return '$name-Guthaben / Kontingent ist leer (429). '
               'Im $name-Konto Guthaben bzw. Limits prüfen — '
