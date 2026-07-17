@@ -450,6 +450,8 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     try {
       final provider = await widget.repository.storage.getAiProvider();
       final apiKey = await widget.repository.storage.getApiKey();
+      final fallbackKeys =
+          await widget.repository.storage.getFallbackApiKeys();
       final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(linkOrText);
       final url = urlMatch?.group(0);
 
@@ -464,6 +466,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         videoMimeType: _videoMimeType,
         videoFileName: _videoName,
         skipPagePreview: _linkContentLoaded && caption.isNotEmpty,
+        fallbackKeys: fallbackKeys,
       );
 
       await widget.repository.saveRecipe(recipe);

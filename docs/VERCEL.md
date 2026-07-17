@@ -38,4 +38,9 @@ Danach bekommst du eine Adresse wie:
 
 - Für Vercel reicht die kostenlose Stufe
 - Kein Apple-Abo nötig
+- Optional: In Vercel → Project → Settings → Environment Variables
+  `GROQ_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY` setzen
+  (siehe `.env.example`). Die Web-App liest sie beim Build ein.
+  Auf dem Handy kannst du dieselben Keys auch unter **Einstellungen**
+  speichern (Fallback bei Gemini-Limit).
 - Galaxy/Tablett bleiben bei der Android-App; Sync über Familie/Cloud

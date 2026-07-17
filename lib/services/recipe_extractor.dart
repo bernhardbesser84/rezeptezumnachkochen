@@ -5,7 +5,9 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 import '../models/ai_provider.dart';
+import '../models/fallback_api_keys.dart';
 import '../models/recipe.dart';
+import 'ai_fallback_service.dart';
 import 'media_transcript.dart';
 
 class PagePreview {
@@ -24,12 +26,18 @@ class RecipeExtractor {
   RecipeExtractor({
     http.Client? client,
     MediaTranscriptService? transcripts,
+    AiFallbackService? fallbackService,
   })  : _client = client ?? http.Client(),
-        _transcripts = transcripts ?? MediaTranscriptService(client: client);
+        _transcripts = transcripts ?? MediaTranscriptService(client: client),
+        _fallback = fallbackService;
 
   final http.Client _client;
   final MediaTranscriptService _transcripts;
+  final AiFallbackService? _fallback;
   final _uuid = const Uuid();
+
+  AiFallbackService get _fallbackService =>
+      _fallback ?? AiFallbackService(client: _client, extractor: this);
 
   /// Zieht Titel und Beschreibung aus einem Link (z. B. Facebook/Instagram).
   Future<PagePreview> fetchPagePreview(String url) async {
@@ -126,6 +134,7 @@ class RecipeExtractor {
     String? videoMimeType,
     String? videoFileName,
     bool skipPagePreview = false,
+    FallbackApiKeys? fallbackKeys,
   }) async {
     final trimmed = sourceText.trim();
     final caption = (captionText ?? '').trim();
@@ -284,12 +293,52 @@ class RecipeExtractor {
     try {
       // Gemini: Video direkt mitschicken (sieht + hört mit).
       if (hasVideo && provider == AiProvider.gemini) {
-        final recipe = await _extractWithGeminiVideo(
+        try {
+          final recipe = await _extractWithGeminiVideo(
+            combinedText: combinedForAi,
+            sourceUrl: url,
+            apiKey: apiKey.trim(),
+            videoBytes: videoBytes,
+            videoMimeType: videoMimeType ?? 'video/mp4',
+            titleFallback: dishTitle,
+          );
+          return _finalizeAiRecipe(
+            recipe,
+            titleFallback: dishTitle,
+            captionMostlyIngredients: captionMostlyIngredients,
+            hasSpokenSource: hasSpokenSource,
+          );
+        } catch (e) {
+          if (_isRateLimitFailure(e)) {
+            debugPrint(
+              '[KI] Gemini Video-Pfad: Limit (429) — Fallback-Kette…',
+            );
+            final fallbackRecipe = await _fallbackService.runAfterGeminiLimit(
+              keys: fallbackKeys ?? FallbackApiKeys.fromEnvironment(),
+              caption: effectiveCaption,
+              sourceUrl: url,
+              titleFallback: dishTitle,
+              dishContext: sources,
+              videoBytes: videoBytes,
+              videoFileName: videoFileName,
+            );
+            return _finalizeAiRecipe(
+              fallbackRecipe,
+              titleFallback: dishTitle,
+              captionMostlyIngredients: false,
+              hasSpokenSource: true,
+            );
+          }
+          rethrow;
+        }
+      }
+
+      try {
+        final recipe = await _extractWithAi(
+          provider: provider,
           combinedText: combinedForAi,
           sourceUrl: url,
           apiKey: apiKey.trim(),
-          videoBytes: videoBytes,
-          videoMimeType: videoMimeType ?? 'video/mp4',
           titleFallback: dishTitle,
         );
         return _finalizeAiRecipe(
@@ -298,21 +347,30 @@ class RecipeExtractor {
           captionMostlyIngredients: captionMostlyIngredients,
           hasSpokenSource: hasSpokenSource,
         );
+      } catch (e) {
+        if (provider == AiProvider.gemini && _isRateLimitFailure(e)) {
+          debugPrint(
+            '[KI] Gemini Text-Pfad: Limit (429) — Fallback-Kette…',
+          );
+          final fallbackRecipe = await _fallbackService.runAfterGeminiLimit(
+            keys: fallbackKeys ?? FallbackApiKeys.fromEnvironment(),
+            caption: effectiveCaption,
+            sourceUrl: url,
+            titleFallback: dishTitle,
+            dishContext: sources,
+            videoBytes: hasVideo ? videoBytes : null,
+            videoFileName: videoFileName,
+          );
+          return _finalizeAiRecipe(
+            fallbackRecipe,
+            titleFallback: dishTitle,
+            captionMostlyIngredients: false,
+            hasSpokenSource: hasVideo ||
+                (fallbackRecipe.notes?.contains('Groq') ?? false),
+          );
+        }
+        rethrow;
       }
-
-      final recipe = await _extractWithAi(
-        provider: provider,
-        combinedText: combinedForAi,
-        sourceUrl: url,
-        apiKey: apiKey.trim(),
-        titleFallback: dishTitle,
-      );
-      return _finalizeAiRecipe(
-        recipe,
-        titleFallback: dishTitle,
-        captionMostlyIngredients: captionMostlyIngredients,
-        hasSpokenSource: hasSpokenSource,
-      );
     } catch (e) {
       // Bei Limit/Guthaben: kein erfundenes Platzhalter-Rezept speichern.
       if (_isHardAiFailure(e)) {
@@ -330,6 +388,15 @@ class RecipeExtractor {
         ].join('\n'),
       );
     }
+  }
+
+  bool _isRateLimitFailure(Object error) {
+    final lower = error.toString().toLowerCase();
+    return lower.contains('429') ||
+        lower.contains('limit erreicht') ||
+        lower.contains('resource_exhausted') ||
+        lower.contains('too many') ||
+        lower.contains('rate limit');
   }
 
   /// Limit, Guthaben, ungültiger Schlüssel → Nutzer soll warten/aufladen, nicht speichern.
@@ -1092,7 +1159,7 @@ class RecipeExtractor {
     throw const FormatException('KI-Antwort war kein JSON-Objekt.');
   }
 
-  @visibleForTesting
+  /// Wandelt KI-JSON in ein Rezept um (auch für Fallback-Anbieter).
   Recipe parseAiRecipeJson(String raw, [String sourceUrl = '']) {
     return _recipeFromAiJson(raw, sourceUrl);
   }

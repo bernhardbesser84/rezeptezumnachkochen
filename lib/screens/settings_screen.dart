@@ -25,6 +25,9 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _controller = TextEditingController();
+  final _groqController = TextEditingController();
+  final _mistralController = TextEditingController();
+  final _openRouterController = TextEditingController();
   final _focusNode = FocusNode();
   bool _loading = true;
   bool _obscure = false; // Auf dem iPhone sonst oft kein „Einfügen“
@@ -39,8 +42,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final provider = await widget.repository.storage.getAiProvider();
     final key = await widget.repository.storage.getApiKeyFor(provider);
+    final fallback = await widget.repository.storage.getFallbackApiKeys();
     _provider = provider;
     _controller.text = key ?? '';
+    _groqController.text = fallback.groq ?? '';
+    _mistralController.text = fallback.mistral ?? '';
+    _openRouterController.text = fallback.openRouter ?? '';
     if (mounted) setState(() => _loading = false);
   }
 
@@ -83,6 +90,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     await widget.repository.storage.setAiProvider(_provider);
     await widget.repository.storage.setApiKeyFor(_provider, _controller.text);
+    await widget.repository.storage.setFallbackApiKeys(
+      groq: _groqController.text,
+      mistral: _mistralController.text,
+      openRouter: _openRouterController.text,
+    );
     try {
       await widget.googleBackup?.backupIfSignedIn();
     } catch (_) {}
@@ -103,6 +115,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _groqController.dispose();
+    _mistralController.dispose();
+    _openRouterController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
@@ -224,6 +239,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 FilledButton(
                   onPressed: _save,
                   child: const Text('Speichern'),
+                ),
+                const SizedBox(height: 28),
+                const Text(
+                  'Fallback bei Gemini-Limit (429)',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Wenn Gemini „zu viele Anfragen“ meldet, nutzt die App '
+                  'automatisch: zuerst Groq (Video-Ton → Text), dann '
+                  'Mistral oder OpenRouter (Text → Rezept). '
+                  'Keys: GROQ_API_KEY, MISTRAL_API_KEY, OPENROUTER_API_KEY.',
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _groqController,
+                  obscureText: _obscure,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  keyboardType: TextInputType.visiblePassword,
+                  decoration: const InputDecoration(
+                    labelText: 'Groq API-Schlüssel (Whisper)',
+                    hintText: 'gsk_…',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _mistralController,
+                  obscureText: _obscure,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  keyboardType: TextInputType.visiblePassword,
+                  decoration: const InputDecoration(
+                    labelText: 'Mistral API-Schlüssel',
+                    hintText: '…',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _openRouterController,
+                  obscureText: _obscure,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  keyboardType: TextInputType.visiblePassword,
+                  decoration: const InputDecoration(
+                    labelText: 'OpenRouter API-Schlüssel',
+                    hintText: 'sk-or-…',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Kostenlose Keys: console.groq.com, console.mistral.ai, '
+                  'openrouter.ai — siehe auch .env.example im Projekt.',
+                ),
+                const SizedBox(height: 16),
+                FilledButton.tonal(
+                  onPressed: _save,
+                  child: const Text('Fallback-Schlüssel speichern'),
                 ),
                 const SizedBox(height: 28),
                 Container(
