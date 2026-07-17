@@ -80,6 +80,22 @@ Zubereitung:
     expect(recipe.title.toLowerCase(), contains('garnelen'));
   });
 
+  test('skipPagePreview vermeidet erneuten Link-Abruf', () async {
+    var httpCalls = 0;
+    final client = MockClient((request) async {
+      httpCalls++;
+      return http.Response('<html></html>', 200);
+    });
+    final extractor = RecipeExtractor(client: client);
+    await extractor.extractRecipe(
+      sourceText: 'https://www.facebook.com/reel/1',
+      captionText: 'High Protein Döner Wrap\nZutaten: Hähnchen, Salat',
+      useAi: false,
+      skipPagePreview: true,
+    );
+    expect(httpCalls, 0);
+  });
+
   test('KI-JSON mit Codeblock und Extra-Text wird gelesen', () {
     final extractor = RecipeExtractor();
     final recipe = extractor.parseAiRecipeJson('''

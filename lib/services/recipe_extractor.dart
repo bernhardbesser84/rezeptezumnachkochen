@@ -125,6 +125,7 @@ class RecipeExtractor {
     Uint8List? videoBytes,
     String? videoMimeType,
     String? videoFileName,
+    bool skipPagePreview = false,
   }) async {
     final trimmed = sourceText.trim();
     final caption = (captionText ?? '').trim();
@@ -147,12 +148,19 @@ class RecipeExtractor {
       if (found != null) url = found;
     }
 
-    if (url.isNotEmpty) {
+    if (url.isNotEmpty && !skipPagePreview) {
       preview = await fetchPagePreview(url);
       // Facebook liefert oft den Reel-Canonical in og:url — den bevorzugen.
       if (preview.url.isNotEmpty && preview.url != url) {
         url = preview.url;
       }
+    } else if (url.isNotEmpty && skipPagePreview && caption.isNotEmpty) {
+      // Caption/Video schon vom Link geladen — Facebook nicht erneut anfragen.
+      preview = PagePreview(
+        url: url,
+        title: '',
+        description: caption,
+      );
     }
 
     // Wenn niemand Caption eingefügt hat: Meta-Beschreibung vom Link nutzen.
