@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/ai_provider.dart';
 import '../models/family_config.dart';
+import '../models/fallback_api_keys.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 
@@ -205,6 +206,44 @@ class RecipeStorage {
           clearOpenaiApiKey: trimmed.isEmpty,
         ),
       );
+    }
+  }
+
+  Future<FallbackApiKeys> getFallbackApiKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = FallbackApiKeys(
+      groq: prefs.getString(FallbackApiKeys.storageKeyGroq),
+      mistral: prefs.getString(FallbackApiKeys.storageKeyMistral),
+      openRouter: prefs.getString(FallbackApiKeys.storageKeyOpenRouter),
+    );
+    return FallbackApiKeys.fromEnvironment().merge(stored);
+  }
+
+  Future<void> setFallbackApiKeys({
+    String? groq,
+    String? mistral,
+    String? openRouter,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await _setOrRemove(prefs, FallbackApiKeys.storageKeyGroq, groq);
+    await _setOrRemove(prefs, FallbackApiKeys.storageKeyMistral, mistral);
+    await _setOrRemove(
+      prefs,
+      FallbackApiKeys.storageKeyOpenRouter,
+      openRouter,
+    );
+  }
+
+  Future<void> _setOrRemove(
+    SharedPreferences prefs,
+    String key,
+    String? value,
+  ) async {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      await prefs.remove(key);
+    } else {
+      await prefs.setString(key, trimmed);
     }
   }
 
