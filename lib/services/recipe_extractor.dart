@@ -125,6 +125,7 @@ class RecipeExtractor {
     Uint8List? videoBytes,
     String? videoMimeType,
     String? videoFileName,
+    bool skipPagePreview = false,
   }) async {
     final trimmed = sourceText.trim();
     final caption = (captionText ?? '').trim();
@@ -147,12 +148,19 @@ class RecipeExtractor {
       if (found != null) url = found;
     }
 
-    if (url.isNotEmpty) {
+    if (url.isNotEmpty && !skipPagePreview) {
       preview = await fetchPagePreview(url);
       // Facebook liefert oft den Reel-Canonical in og:url — den bevorzugen.
       if (preview.url.isNotEmpty && preview.url != url) {
         url = preview.url;
       }
+    } else if (url.isNotEmpty && skipPagePreview && caption.isNotEmpty) {
+      // Caption/Video schon vom Link geladen — Facebook nicht erneut anfragen.
+      preview = PagePreview(
+        url: url,
+        title: '',
+        description: caption,
+      );
     }
 
     // Wenn niemand Caption eingefügt hat: Meta-Beschreibung vom Link nutzen.
@@ -265,6 +273,8 @@ class RecipeExtractor {
           combinedText: sources,
           titleHint: dishTitle,
           sourceUrl: url,
+          caption: effectiveCaption,
+          ingredientsOnly: captionMostlyIngredients && !hasSpokenSource,
         );
 
     if (!useAi || apiKey == null || apiKey.trim().isEmpty) {
@@ -274,22 +284,40 @@ class RecipeExtractor {
     try {
       // Gemini: Video direkt mitschicken (sieht + hört mit).
       if (hasVideo && provider == AiProvider.gemini) {
-        return await _extractWithGeminiVideo(
+        final recipe = await _extractWithGeminiVideo(
           combinedText: combinedForAi,
           sourceUrl: url,
           apiKey: apiKey.trim(),
           videoBytes: videoBytes,
           videoMimeType: videoMimeType ?? 'video/mp4',
+          titleFallback: dishTitle,
+        );
+        return _finalizeAiRecipe(
+          recipe,
+          titleFallback: dishTitle,
+          captionMostlyIngredients: captionMostlyIngredients,
+          hasSpokenSource: hasSpokenSource,
         );
       }
 
-      return await _extractWithAi(
+      final recipe = await _extractWithAi(
         provider: provider,
         combinedText: combinedForAi,
         sourceUrl: url,
         apiKey: apiKey.trim(),
+        titleFallback: dishTitle,
+      );
+      return _finalizeAiRecipe(
+        recipe,
+        titleFallback: dishTitle,
+        captionMostlyIngredients: captionMostlyIngredients,
+        hasSpokenSource: hasSpokenSource,
       );
     } catch (e) {
+      // Bei Limit/Guthaben: kein erfundenes Platzhalter-Rezept speichern.
+      if (_isHardAiFailure(e)) {
+        rethrow;
+      }
       final fallback = local();
       final reason = e.toString().replaceFirst('Exception: ', '');
       return fallback.copyWith(
@@ -302,6 +330,63 @@ class RecipeExtractor {
         ].join('\n'),
       );
     }
+  }
+
+  /// Limit, Guthaben, ungültiger Schlüssel → Nutzer soll warten/aufladen, nicht speichern.
+  bool _isHardAiFailure(Object error) {
+    final lower = error.toString().toLowerCase();
+    return lower.contains('429') ||
+        lower.contains('limit erreicht') ||
+        lower.contains('kontingent') ||
+        lower.contains('guthaben') ||
+        lower.contains('insufficient_quota') ||
+        lower.contains('resource_exhausted') ||
+        lower.contains('401') ||
+        lower.contains('403') ||
+        lower.contains('unauthorized') ||
+        lower.contains('without berechtigung');
+  }
+
+  /// Nach KI-Antwort: nutzlosen Titel korrigieren, ohne Video keine erfundenen Schritte.
+  Recipe _finalizeAiRecipe(
+    Recipe recipe, {
+    required String titleFallback,
+    required bool captionMostlyIngredients,
+    required bool hasSpokenSource,
+  }) {
+    var title = recipe.title;
+    if (_isUselessDishTitle(title) &&
+        titleFallback.isNotEmpty &&
+        !_isUselessDishTitle(titleFallback)) {
+      title = titleFallback;
+    }
+
+    if (!hasSpokenSource && captionMostlyIngredients) {
+      final looksLikePlaceholder = recipe.steps.any(
+        (s) =>
+            s.toLowerCase().contains('video') ||
+            s.toLowerCase().contains('platzhalter') ||
+            s.toLowerCase().contains('selbst eintragen') ||
+            s.toLowerCase().contains('im video'),
+      );
+      if (!looksLikePlaceholder && recipe.steps.length >= 3) {
+        return recipe.copyWith(
+          title: title,
+          steps: const [
+            'Die Zubereitung steht nur im Video (gesprochen).',
+            'Bitte „Video vom Link laden“ oder Video anhängen und mit Gemini erneut erstellen.',
+            'Bis dahin: Originalvideo beim Kochen offen lassen.',
+          ],
+          notes: [
+            if (recipe.notes != null && recipe.notes!.isNotEmpty) recipe.notes!,
+            'Schritte wurden nicht übernommen, weil in der Caption nur Zutaten '
+                'standen und kein Video/Ton ausgewertet werden konnte.',
+          ].join(' '),
+        );
+      }
+    }
+
+    return title != recipe.title ? recipe.copyWith(title: title) : recipe;
   }
 
   String _buildSourceBlocks({
@@ -582,6 +667,7 @@ class RecipeExtractor {
     required String combinedText,
     required String sourceUrl,
     required String apiKey,
+    required String titleFallback,
   }) async {
     final userPrompt =
         'Erstelle daraus ein nachkochbares Rezept:\n$combinedText';
@@ -592,18 +678,21 @@ class RecipeExtractor {
           combinedText: userPrompt,
           sourceUrl: sourceUrl,
           apiKey: apiKey,
+          titleFallback: titleFallback,
         );
       case AiProvider.gemini:
         return _extractWithGemini(
           combinedText: userPrompt,
           sourceUrl: sourceUrl,
           apiKey: apiKey,
+          titleFallback: titleFallback,
         );
       case AiProvider.claude:
         return _extractWithClaude(
           combinedText: userPrompt,
           sourceUrl: sourceUrl,
           apiKey: apiKey,
+          titleFallback: titleFallback,
         );
     }
   }
@@ -614,6 +703,7 @@ class RecipeExtractor {
     required String apiKey,
     required Uint8List videoBytes,
     required String videoMimeType,
+    required String titleFallback,
   }) async {
     final body = await _postGeminiGenerateContent(
       apiKey: apiKey,
@@ -651,13 +741,18 @@ class RecipeExtractor {
       },
       timeout: const Duration(seconds: 90),
     );
-    return _recipeFromAiJson(_geminiAnswerText(body), sourceUrl);
+    return _recipeFromAiJson(
+      _geminiAnswerText(body),
+      sourceUrl,
+      titleFallback: titleFallback,
+    );
   }
 
   Future<Recipe> _extractWithOpenAi({
     required String combinedText,
     required String sourceUrl,
     required String apiKey,
+    required String titleFallback,
   }) async {
     final response = await _client
         .post(
@@ -687,13 +782,14 @@ class RecipeExtractor {
     final body = jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
     final content =
         (body['choices'] as List).first['message']['content'] as String;
-    return _recipeFromAiJson(content, sourceUrl);
+    return _recipeFromAiJson(content, sourceUrl, titleFallback: titleFallback);
   }
 
   Future<Recipe> _extractWithGemini({
     required String combinedText,
     required String sourceUrl,
     required String apiKey,
+    required String titleFallback,
   }) async {
     final body = await _postGeminiGenerateContent(
       apiKey: apiKey,
@@ -715,13 +811,18 @@ class RecipeExtractor {
       },
       timeout: const Duration(seconds: 45),
     );
-    return _recipeFromAiJson(_geminiAnswerText(body), sourceUrl);
+    return _recipeFromAiJson(
+      _geminiAnswerText(body),
+      sourceUrl,
+      titleFallback: titleFallback,
+    );
   }
 
   Future<Recipe> _extractWithClaude({
     required String combinedText,
     required String sourceUrl,
     required String apiKey,
+    required String titleFallback,
   }) async {
     final response = await _client
         .post(
@@ -762,10 +863,8 @@ class RecipeExtractor {
     if (text.isEmpty) {
       throw Exception('Claude-Antwort war leer. Bitte erneut versuchen.');
     }
-    return _recipeFromAiJson(text, sourceUrl);
+    return _recipeFromAiJson(text, sourceUrl, titleFallback: titleFallback);
   }
-
-  /// Modelle der Reihe nach — bei 404 das nächste versuchen (max. wenige Anfragen).
   static const _geminiModels = <String>[
     'gemini-2.0-flash',
     'gemini-2.5-flash',
@@ -1011,13 +1110,21 @@ class RecipeExtractor {
   @visibleForTesting
   String decodeHtmlForTest(String value) => _decodeHtml(value);
 
-  Recipe _recipeFromAiJson(String raw, String sourceUrl) {
+  Recipe _recipeFromAiJson(
+    String raw,
+    String sourceUrl, {
+    String titleFallback = '',
+  }) {
     final parsed = _decodeAiJsonObject(raw);
 
     var title = (parsed['title'] as String?)?.trim() ?? '';
     title = _fixGermanSpelling(_cleanTitle(_stripPlatformSuffix(title)));
     if (title.isEmpty || _isUselessDishTitle(title)) {
-      title = 'Neues Rezept';
+      if (titleFallback.isNotEmpty && !_isUselessDishTitle(titleFallback)) {
+        title = titleFallback;
+      } else {
+        title = 'Neues Rezept';
+      }
     }
 
     final servingsRaw = parsed['servings'];
@@ -1153,60 +1260,39 @@ class RecipeExtractor {
     required String combinedText,
     required String titleHint,
     required String sourceUrl,
+    String caption = '',
+    bool ingredientsOnly = false,
   }) {
-    final lines = combinedText
-        .split(RegExp(r'[\n\r]+'))
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
+    final captionText =
+        caption.isNotEmpty ? caption : _extractCaptionBlock(combinedText);
 
-    final ingredients = <String>[];
-    final steps = <String>[];
-    var mode = 'none';
+    var ingredients = _parseIngredientsFromText(captionText);
+    var steps = _parseStepsFromText(captionText);
 
-    for (final line in lines) {
-      final lower = line.toLowerCase();
-      if (lower.contains('zutat')) {
-        mode = 'ingredients';
-        continue;
-      }
-      if (lower.contains('zubereitung') ||
-          lower.contains('anleitung') ||
-          lower.contains('schritt')) {
-        mode = 'steps';
-        continue;
-      }
-
-      final cleaned = line
-          .replaceFirst(RegExp(r'^(zutat(en)?|beschreibung|titel)\s*:\s*',
-              caseSensitive: false), '')
-          .trim();
-
-      if (mode == 'ingredients' || _looksLikeIngredient(cleaned)) {
-        ingredients.add(_stripBullet(cleaned));
-        if (mode == 'none') mode = 'ingredients';
-        continue;
-      }
-      if (mode == 'steps' || _looksLikeStep(cleaned)) {
-        steps.add(_stripBullet(cleaned));
-        if (mode == 'none') mode = 'steps';
+    if (ingredients.isEmpty) {
+      for (final line in combinedText.split(RegExp(r'[\n\r]+'))) {
+        final cleaned = _stripBullet(line.trim());
+        if (cleaned.isEmpty) continue;
+        if (_looksLikeIngredient(cleaned)) {
+          ingredients.add(cleaned);
+        }
       }
     }
 
-    final title = () {
-      final fromHint = titleHint.trim().isNotEmpty
-          ? _cleanTitle(_stripPlatformSuffix(titleHint))
-          : '';
-      if (fromHint.isNotEmpty && !_isUselessDishTitle(fromHint)) {
-        return fromHint;
-      }
-      final fromText = _guessTitleFromText(combinedText);
-      if (!_isUselessDishTitle(fromText)) return fromText;
-      return 'Neues Rezept';
-    }();
+    final title = _resolveLocalTitle(titleHint, captionText);
 
     if (ingredients.isEmpty && steps.isEmpty) {
-      return _buildFallbackRecipe(title: title, sourceUrl: sourceUrl);
+      return _buildHonestPlaceholderRecipe(
+        title: title,
+        sourceUrl: sourceUrl,
+      );
+    }
+
+    if (ingredientsOnly && steps.isEmpty) {
+      steps = const [
+        'Die Zubereitung wird im Video gesprochen — ohne Video/KI nicht übernehmbar.',
+        'Bitte Video anhängen oder „Video vom Link laden“, dann erneut erstellen.',
+      ];
     }
 
     return Recipe(
@@ -1214,28 +1300,137 @@ class RecipeExtractor {
       title: title,
       ingredients: ingredients.isEmpty
           ? [
-              'Zutaten waren im Video-Text nicht klar erkennbar.',
-              'Tipp: Füge den Rezepttext aus dem Video ein oder hinterlege '
-                  'einen KI-Schlüssel (OpenAI, Gemini oder Claude) in den Einstellungen.',
+              'Zutaten waren im Text nicht klar erkennbar — bitte aus dem Video ergänzen.',
             ]
           : ingredients,
       steps: steps.isEmpty
           ? [
-              'Öffne das Originalvideo und schaue die Zubereitung noch einmal an.',
-              'Trage danach die Schritte manuell nach oder nutze die KI '
-                  'mit API-Schlüssel für eine automatische Anleitung.',
+              'Originalvideo beim Kochen offen lassen und Schritte manuell eintragen.',
             ]
           : steps,
       sourceUrl: sourceUrl,
       createdAt: DateTime.now(),
-      notes:
-          'Erstellt ohne KI-Schlüssel (lokale Auswertung). Für bessere '
-          'Ergebnisse hinterlege unter Einstellungen einen KI-Schlüssel '
-          '(OpenAI, Gemini oder Claude).',
+      notes: ingredientsOnly
+          ? 'Zutaten aus der Caption übernommen. Für echte Schritte Video + KI (Gemini) nutzen.'
+          : 'Erstellt ohne KI-Schlüssel (lokale Auswertung). Für bessere Ergebnisse '
+              'unter Einstellungen einen KI-Schlüssel hinterlegen (OpenAI, Gemini oder Claude).',
     );
   }
 
-  Recipe _buildFallbackRecipe({
+  String _extractCaptionBlock(String combinedText) {
+    const marker = 'Text unter dem Video (Caption / Beschreibung):';
+    final idx = combinedText.indexOf(marker);
+    if (idx < 0) return combinedText;
+    var rest = combinedText.substring(idx + marker.length).trim();
+    for (final stop in [
+      'Eingefügter Text / geteilter Inhalt:',
+      'Gesprochener Text / Untertitel',
+      'Aus dem Video-Ton transkribierter Text:',
+      'Quelle (Link):',
+    ]) {
+      final stopIdx = rest.indexOf(stop);
+      if (stopIdx > 0) {
+        rest = rest.substring(0, stopIdx).trim();
+      }
+    }
+    return rest;
+  }
+
+  List<String> _parseIngredientsFromText(String text) {
+    final ingredients = <String>[];
+    var mode = 'none';
+
+    for (final raw in text.split(RegExp(r'[\n\r]+'))) {
+      final line = raw.trim();
+      if (line.isEmpty || line.startsWith('http') || line.startsWith('#')) {
+        continue;
+      }
+      final lower = line.toLowerCase();
+      if (lower.contains('zutat')) {
+        mode = 'ingredients';
+        continue;
+      }
+      if (lower.contains('zubereitung') ||
+          lower.contains('anleitung') ||
+          lower.startsWith('schritt')) {
+        break;
+      }
+      if (_isMarketingLine(line)) continue;
+
+      final cleaned = _stripBullet(line);
+      if (mode == 'ingredients' ||
+          _looksLikeIngredient(cleaned) ||
+          _looksLikeIngredientLine(cleaned)) {
+        if (!_looksLikeStep(cleaned)) {
+          ingredients.add(cleaned);
+        }
+      }
+    }
+    return ingredients;
+  }
+
+  List<String> _parseStepsFromText(String text) {
+    final steps = <String>[];
+    var mode = 'none';
+
+    for (final raw in text.split(RegExp(r'[\n\r]+'))) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      final lower = line.toLowerCase();
+      if (lower.contains('zubereitung') ||
+          lower.contains('anleitung') ||
+          lower.startsWith('schritt')) {
+        mode = 'steps';
+        continue;
+      }
+      if (mode == 'steps' || _looksLikeStep(line)) {
+        steps.add(_stripBullet(line));
+      }
+    }
+    return steps;
+  }
+
+  bool _looksLikeIngredientLine(String line) {
+    if (line.length < 3 || line.length > 120) return false;
+    return RegExp(
+      r'\b(\d+[.,]?\d*\s*(g|kg|mg|ml|l|cl|el|tl|prise|stück|stk|zehe|zehen|bund|dose|packung|pck|tasse|becher|handvoll|scheibe|scheiben))\b',
+      caseSensitive: false,
+    ).hasMatch(line);
+  }
+
+  String _resolveLocalTitle(String titleHint, String captionText) {
+    if (titleHint.trim().isNotEmpty &&
+        !_isUselessDishTitle(_cleanTitle(_stripPlatformSuffix(titleHint)))) {
+      return _cleanTitle(_stripPlatformSuffix(titleHint));
+    }
+    for (final line in captionText.split(RegExp(r'[\n\r]+'))) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty ||
+          trimmed.startsWith('http') ||
+          _looksLikeIngredient(trimmed) ||
+          _looksLikeIngredientLine(trimmed) ||
+          _isMarketingLine(trimmed)) {
+        continue;
+      }
+      if (trimmed.length >= 3 && trimmed.length <= 80 && !_looksLikeStep(trimmed)) {
+        return _cleanTitle(trimmed);
+      }
+    }
+    return 'Neues Rezept';
+  }
+
+  bool _isMarketingLine(String line) {
+    final t = line.toLowerCase();
+    return RegExp(
+      r'(begeistern|nie gesehen|schaut euch|folgt mir|link in bio|'
+      r'rezept des tages|so einfach|genial|unglaublich|sensation|'
+      r'musst du probieren|unbedingt nachmachen|werbung|sponsored|'
+      r'dieses rezept wird)',
+      caseSensitive: false,
+    ).hasMatch(t);
+  }
+
+  Recipe _buildHonestPlaceholderRecipe({
     required String title,
     required String sourceUrl,
   }) {
@@ -1243,25 +1438,17 @@ class RecipeExtractor {
       id: _uuid.v4(),
       title: title,
       ingredients: const [
-        'Zutaten aus dem Video (noch ergänzen)',
-        'Salz & Pfeffer nach Geschmack',
-        'Öl oder Butter zum Anbraten',
+        'Zutaten bitte aus dem Video oder der Caption einfügen.',
       ],
       steps: const [
-        'Alle Zutaten bereitstellen.',
-        'Wie im Video vorbereiten und portionieren.',
-        'Nach und nach zubereiten – bei Unsicherheit kurz das Video pausieren.',
-        'Abschmecken und servieren.',
+        'Caption oder Video-Link laden, dann erneut „Anleitung erstellen“.',
+        'Für gesprochene Schritte: Video anhängen und Gemini nutzen.',
       ],
       sourceUrl: sourceUrl,
       createdAt: DateTime.now(),
-      servings: '2–4 Portionen',
-      prepTimeMinutes: 30,
       notes:
-          'Platzhalter-Rezept: Viele Social-Media-Seiten liefern wenig Text. '
-          'Am besten den Beschreibungstext aus dem Video einfügen oder einen '
-          'KI-Schlüssel (OpenAI, Gemini oder Claude) in den Einstellungen '
-          'hinterlegen.',
+          'Es wurde zu wenig Text gefunden. Bitte Caption unter dem Video '
+          'einfügen oder Video vom Link laden.',
     );
   }
 
@@ -1378,6 +1565,14 @@ class RecipeExtractor {
         .hasMatch(t)) {
       return true;
     }
+    if (RegExp(
+      r'(begeistern|nie gesehen|schaut euch|folgt mir|link in bio|'
+      r'rezept des tages|so einfach|genial|unglaublich|sensation|'
+      r'musst du probieren|unbedingt nachmachen|dieses rezept wird)',
+      caseSensitive: false,
+    ).hasMatch(t)) {
+      return true;
+    }
     return false;
   }
 
@@ -1419,6 +1614,7 @@ class RecipeExtractor {
         if (trimmed.isEmpty) continue;
         if (trimmed.startsWith('http')) continue;
         if (trimmed.startsWith('#')) continue;
+        if (_isMarketingLine(trimmed)) continue;
         final titled = RegExp(
           r'^Titel\s*:\s*(.+)$',
           caseSensitive: false,
@@ -1455,43 +1651,6 @@ class RecipeExtractor {
 
   String _guessTitleFromUrl(String url) {
     // Früher: „Rezept von facebook.com“ — das ist kein Gerichtsname.
-    return 'Neues Rezept';
-  }
-
-  String _guessTitleFromText(String text) {
-    final lines = text
-        .split(RegExp(r'[\n\r]+'))
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-
-    for (final line in lines) {
-      final titled = RegExp(
-        r'^Titel\s*:\s*(.+)$',
-        caseSensitive: false,
-      ).firstMatch(line);
-      if (titled != null) {
-        return _cleanTitle(titled.group(1)!);
-      }
-    }
-
-    for (final line in lines) {
-      final lower = line.toLowerCase();
-      if (lower.startsWith('quelle') ||
-          lower.startsWith('seitentitel') ||
-          lower.startsWith('seitenbeschreibung') ||
-          lower.startsWith('text unter dem video') ||
-          lower.startsWith('eingefügter text') ||
-          lower.startsWith('gesprochener text') ||
-          lower.startsWith('aus dem video-ton') ||
-          lower.startsWith('zutat') ||
-          lower.startsWith('zubereitung') ||
-          lower.startsWith('anleitung')) {
-        continue;
-      }
-      return _cleanTitle(line.replaceFirst(RegExp(r'^Titel:\s*'), ''));
-    }
-
     return 'Neues Rezept';
   }
 
@@ -1663,6 +1822,9 @@ class RecipeExtractor {
   }
 
   /// Caption hat Zutaten/Mengen, aber kaum eine gesprochene Anleitung.
+  @visibleForTesting
+  bool isUselessDishTitleForTest(String title) => _isUselessDishTitle(title);
+
   bool captionLooksLikeIngredientsOnly(String caption) {
     final lines = caption
         .split(RegExp(r'[\n\r]+'))

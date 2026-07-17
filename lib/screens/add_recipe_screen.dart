@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../services/app_repository.dart';
 import '../services/caption_fetcher.dart';
+import '../services/link_content_fetcher.dart';
 import '../services/recipe_extractor.dart';
 import '../services/video_link_fetcher.dart';
 import '../theme/app_theme.dart';
@@ -40,6 +41,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   final _picker = ImagePicker();
   late final CaptionFetcher _captionFetcher;
   late final VideoLinkFetcher _videoLinkFetcher;
+  late final LinkContentFetcher _linkContentFetcher;
 
   bool _loading = false;
   bool _fetchingCaption = false;
@@ -54,6 +56,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   String? _videoMimeType;
   String? _videoName;
   bool _videoLinkFetchAttempted = false;
+  bool _linkContentLoaded = false;
 
   @override
   void initState() {
@@ -77,24 +80,20 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     _videoName = widget.initialVideoName;
     _captionFetcher = CaptionFetcher(extractor: widget.extractor);
     _videoLinkFetcher = VideoLinkFetcher();
+    _linkContentFetcher = LinkContentFetcher(
+      captionFetcher: _captionFetcher,
+    );
     _loadKeyState();
 
-    // Link schon da, Caption noch leer → automatisch versuchen zu laden.
-    if (_linkController.text.trim().startsWith('http') &&
-        _captionController.text.trim().isEmpty) {
+    // Link da → Caption (+ bei Facebook Video) in einem Rutsch laden.
+    final linkUrl = _extractLinkUrl();
+    if (linkUrl != null &&
+        (_captionController.text.trim().isEmpty ||
+            (_looksLikeFacebookUrl(linkUrl) && _videoBytes == null))) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        _loadCaptionFromLink(silentIfEmpty: true);
+        _loadFromLink(silentIfEmpty: true);
       });
-    } else if (_videoBytes == null) {
-      // Caption schon da (z. B. geteilt) → bei Facebook Video nachholen.
-      final url = _extractLinkUrl();
-      if (url != null && _looksLikeFacebookUrl(url)) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || _videoBytes != null) return;
-          _loadVideoFromLink(silent: true);
-        });
-      }
     }
   }
 
@@ -163,71 +162,107 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
       }
     });
     if (shouldAutoload) {
-      await _loadCaptionFromLink(silentIfEmpty: true);
+      await _loadFromLink(silentIfEmpty: true);
     }
   }
 
-  Future<void> _loadCaptionFromLink({bool silentIfEmpty = false}) async {
-    final raw = _linkController.text.trim();
-    final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(raw);
-    final url = urlMatch?.group(0) ?? raw;
-    if (!url.startsWith('http')) {
-      setState(() {
-        _error = 'Bitte zuerst einen Video-Link einfügen.';
-      });
+  /// Caption (+ bei Facebook Video) in möglichst wenigen Anfragen laden.
+  Future<void> _loadFromLink({bool silentIfEmpty = false}) async {
+    final url = _extractLinkUrl();
+    if (url == null) {
+      if (!silentIfEmpty) {
+        setState(() {
+          _error = 'Bitte zuerst einen Video-Link einfügen.';
+        });
+      }
       return;
     }
 
     setState(() {
       _fetchingCaption = true;
+      _fetchingVideo = _looksLikeFacebookUrl(url);
       _error = null;
-      _info = 'Caption wird vom Link geladen…';
+      _info = _looksLikeFacebookUrl(url)
+          ? 'Caption und Video werden vom Link geladen…'
+          : 'Caption wird vom Link geladen…';
     });
 
     try {
-      final result = await _captionFetcher.fetchFromUrl(url);
+      final result = await _linkContentFetcher.fetchFromUrl(url);
       if (!mounted) return;
 
-      if (!result.hasCaption) {
+      _linkContentLoaded = true;
+      _videoLinkFetchAttempted = _looksLikeFacebookUrl(url);
+
+      if (result.canonicalUrl != null &&
+          result.canonicalUrl!.trim().isNotEmpty &&
+          result.canonicalUrl != url) {
+        _linkController.text = result.canonicalUrl!.trim();
+      }
+
+      final parts = <String>[];
+      if (result.hasCaption) {
+        _captionController.text = result.caption;
+        _captionController.selection = TextSelection.collapsed(
+          offset: result.caption.length,
+        );
+        parts.add('Caption geladen');
+      }
+
+      if (result.hasVideo) {
+        _videoBytes = result.videoBytes;
+        _videoMimeType = result.videoMimeType ?? 'video/mp4';
+        _videoName = result.videoFileName ?? 'facebook-reel.mp4';
+        parts.add(
+          'Video geladen '
+          '(${(result.videoBytes!.length / 1024 / 1024).toStringAsFixed(1)} MB)',
+        );
+      }
+
+      if (!result.hasCaption && !result.hasVideo) {
         setState(() {
           _fetchingCaption = false;
+          _fetchingVideo = false;
           _info = null;
           if (!silentIfEmpty) {
             _error = result.warning ??
-                'Keine Caption gefunden. Bitte Text unter dem Video manuell einfügen.';
+                result.videoError ??
+                'Keine Daten vom Link gefunden.';
           } else {
             _info =
-                'Keine Caption automatisch gefunden — bitte Text unter dem Video einfügen.';
+                'Automatisch nichts gefunden — bitte Caption/Video manuell ergänzen.';
           }
         });
         return;
       }
 
+      var info = parts.join(', ');
+      if (result.hasCaption && !result.hasVideo && result.videoError != null) {
+        info =
+            '$info. Video: ${result.videoError} '
+            'Du kannst „Video vom Link laden“ nochmal tippen oder „Video wählen“. ';
+      }
+      info = '$info Bitte kurz prüfen, dann Anleitung erstellen.';
+
       setState(() {
-        _captionController.text = result.caption;
-        _captionController.selection = TextSelection.collapsed(
-          offset: result.caption.length,
-        );
         _fetchingCaption = false;
-        _info =
-            'Caption automatisch geladen'
-            '${result.title.isNotEmpty ? ' (${result.title})' : ''}. '
-            'Bitte kurz prüfen, dann Anleitung erstellen.';
+        _fetchingVideo = false;
+        _info = info;
         _error = null;
       });
-
-      // Facebook: Zubereitung ist gesprochen → Video vom Link nachladen.
-      if (_videoBytes == null && _looksLikeFacebookUrl(url)) {
-        await _loadVideoFromLink(silent: true);
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _fetchingCaption = false;
+        _fetchingVideo = false;
         _info = null;
         _error = e.toString().replaceFirst('Exception: ', '');
       });
     }
+  }
+
+  Future<void> _loadCaptionFromLink({bool silentIfEmpty = false}) async {
+    await _loadFromLink(silentIfEmpty: silentIfEmpty);
   }
 
   Future<void> _loadVideoFromLink({bool silent = false, bool force = false}) async {
@@ -428,6 +463,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         videoBytes: _videoBytes,
         videoMimeType: _videoMimeType,
         videoFileName: _videoName,
+        skipPagePreview: _linkContentLoaded && caption.isNotEmpty,
       );
 
       await widget.repository.saveRecipe(recipe);
@@ -442,8 +478,8 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'KI nicht erreichbar — Rezept trotzdem ohne KI angelegt. '
-              'Du kannst es danach ergänzen.',
+              'KI vorübergehend nicht erreichbar — Zutaten aus dem Text '
+              'übernommen. Für Schritte Video + KI nutzen.',
             ),
           ),
         );
@@ -632,8 +668,10 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                   )
                 : const Icon(Icons.download),
             label: Text(
-              _fetchingCaption
-                  ? 'Caption wird geladen…'
+              (_fetchingCaption || _fetchingVideo)
+                  ? (_fetchingVideo
+                      ? 'Link-Inhalte werden geladen…'
+                      : 'Caption wird geladen…')
                   : 'Caption vom Link laden',
             ),
           ),
