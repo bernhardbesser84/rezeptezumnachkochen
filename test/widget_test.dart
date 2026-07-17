@@ -252,6 +252,43 @@ Lange Caption ohne Abschneidung mit Zutatenhinweis und Hashtags." />
     expect(recipe.notes, contains('geschätzt'));
   });
 
+  test('Marketing-Titel von Facebook wird verworfen', () {
+    final extractor = RecipeExtractor();
+    expect(
+      extractor.isUselessDishTitleForTest('Dieses Rezept wird Sie begeistern!'),
+      isTrue,
+    );
+    expect(
+      extractor.isUselessDishTitleForTest('High Protein Döner Wrap'),
+      isFalse,
+    );
+  });
+
+  test('Zutaten-Caption ohne KI: echte Zutaten, ehrliche Schritte', () async {
+    final extractor = RecipeExtractor();
+    final recipe = await extractor.extractRecipe(
+      sourceText: 'https://www.facebook.com/reel/1',
+      captionText: '''
+Dieses Rezept wird Sie begeistern!
+High Protein Bowl
+500 g Hähnchenbrust
+200 g Reis
+150 ml Gemüsebrühe
+1 Zwiebel
+2 EL Olivenöl
+''',
+      useAi: false,
+      skipPagePreview: true,
+    );
+    expect(recipe.title.toLowerCase(), contains('high protein bowl'));
+    expect(recipe.title.toLowerCase(), isNot(contains('begeistern')));
+    expect(recipe.ingredients.length, greaterThanOrEqualTo(4));
+    expect(
+      recipe.steps.any((s) => s.toLowerCase().contains('video')),
+      isTrue,
+    );
+  });
+
   test('Caption mit nur Zutaten wird erkannt', () {
     final extractor = RecipeExtractor();
     expect(

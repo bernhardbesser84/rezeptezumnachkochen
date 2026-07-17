@@ -478,8 +478,8 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'KI nicht erreichbar — Rezept trotzdem ohne KI angelegt. '
-              'Du kannst es danach ergänzen.',
+              'KI vorübergehend nicht erreichbar — Zutaten aus dem Text '
+              'übernommen. Für Schritte Video + KI nutzen.',
             ),
           ),
         );
