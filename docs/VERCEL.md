@@ -32,9 +32,10 @@ Danach bekommst du eine Adresse wie:
 
 1. Diese Adresse in **Safari** öffnen
 2. Teilen → **Zum Home-Bildschirm**
-3. Caption unter dem Video kopieren und in der App einfügen
+3. Rezept-Links kopieren und in der App einfügen
 
 ## Hinweis
 
 - Für Vercel reicht die kostenlose Stufe
 - Kein Apple-Abo nötig
+- Galaxy/Tablett bleiben bei der Android-App; Sync über Familie/Cloud
