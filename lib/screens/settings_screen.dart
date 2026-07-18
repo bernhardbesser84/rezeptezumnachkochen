@@ -46,6 +46,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _switchProvider(AiProvider provider) async {
     if (provider == _provider) return;
+    // Aktuellen Text erst zwischenspeichern, damit nichts verloren geht.
     await widget.repository.storage.setApiKeyFor(_provider, _controller.text);
     await widget.repository.storage.setAiProvider(provider);
     final key = await widget.repository.storage.getApiKeyFor(provider);
@@ -159,9 +160,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Die KI macht aus dem Caption-Text ein strukturiertes Rezept '
-                  '(Zutaten + Schritte). Kleine Text-Anfragen — kein Video-Upload. '
-                  'Ohne Schlüssel funktioniert die App trotzdem einfacher.',
+                  'Damit aus Videos eine richtige Schritt-für-Schritt-Anleitung '
+                  'wird. Du kannst OpenAI, Gemini oder Claude nutzen. '
+                  'Ohne Schlüssel funktioniert die App trotzdem, nur einfacher.',
                 ),
                 const SizedBox(height: 14),
                 SegmentedButton<AiProvider>(
@@ -209,8 +210,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Text(
                   'Tipp fürs iPhone: ${_provider.label}-Schlüssel zuerst '
                   'kopieren, dann hier auf „Schlüssel einfügen“ tippen.\n'
-                  'Bei Limit-Fehler (429): 1–2 Minuten warten oder '
-                  'Guthaben im ${_provider.label}-Konto prüfen.',
+                  'Jeder Anbieter speichert seinen eigenen Schlüssel. '
+                  'Bei Limit-Fehler (429): Guthaben/Kontingent im '
+                  '${_provider.label}-Konto prüfen.',
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -242,8 +244,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       SizedBox(height: 8),
                       Text(
-                        '• iPhone: Caption kopieren und Rezept erstellen\n'
-                        '• Samsung-Tablett: große Kochschritte\n'
+                        '• iPhone: Videos finden und Link einfügen\n'
+                        '• Samsung-Tablett: große Kochschritte + Video\n'
                         '• Galaxy-Handy: Einkaufsliste abhaken im Laden',
                       ),
                     ],
