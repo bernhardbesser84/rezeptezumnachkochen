@@ -123,17 +123,6 @@ class GoogleBackupService {
         apiKeys[provider.storageValue] = key.trim();
       }
     }
-    final fallback = await storage.getFallbackApiKeys();
-    if (fallback.groq != null && fallback.groq!.trim().isNotEmpty) {
-      apiKeys['groq'] = fallback.groq!.trim();
-    }
-    if (fallback.mistral != null && fallback.mistral!.trim().isNotEmpty) {
-      apiKeys['mistral'] = fallback.mistral!.trim();
-    }
-    if (fallback.openRouter != null &&
-        fallback.openRouter!.trim().isNotEmpty) {
-      apiKeys['openrouter'] = fallback.openRouter!.trim();
-    }
 
     return AppBackupPayload(
       savedAt: DateTime.now(),
@@ -157,11 +146,6 @@ class GoogleBackupService {
       final key = payload.apiKeys[provider.storageValue];
       await storage.setApiKeyFor(provider, key);
     }
-    await storage.setFallbackApiKeys(
-      groq: payload.apiKeys['groq'],
-      mistral: payload.apiKeys['mistral'],
-      openRouter: payload.apiKeys['openrouter'],
-    );
     if (payload.demoSeeded) {
       await storage.markDemoSeeded();
     }

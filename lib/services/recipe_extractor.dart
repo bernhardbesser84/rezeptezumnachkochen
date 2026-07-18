@@ -5,9 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 import '../models/ai_provider.dart';
-import '../models/fallback_api_keys.dart';
 import '../models/recipe.dart';
-import 'ai_fallback_service.dart';
 import 'media_transcript.dart';
 
 class PagePreview {
@@ -26,18 +24,12 @@ class RecipeExtractor {
   RecipeExtractor({
     http.Client? client,
     MediaTranscriptService? transcripts,
-    AiFallbackService? fallbackService,
   })  : _client = client ?? http.Client(),
-        _transcripts = transcripts ?? MediaTranscriptService(client: client),
-        _fallback = fallbackService;
+        _transcripts = transcripts ?? MediaTranscriptService(client: client);
 
   final http.Client _client;
   final MediaTranscriptService _transcripts;
-  final AiFallbackService? _fallback;
   final _uuid = const Uuid();
-
-  AiFallbackService get _fallbackService =>
-      _fallback ?? AiFallbackService(client: _client, extractor: this);
 
   /// Zieht Titel und Beschreibung aus einem Link (z. B. Facebook/Instagram).
   Future<PagePreview> fetchPagePreview(String url) async {
@@ -134,7 +126,6 @@ class RecipeExtractor {
     String? videoMimeType,
     String? videoFileName,
     bool skipPagePreview = false,
-    FallbackApiKeys? fallbackKeys,
   }) async {
     final trimmed = sourceText.trim();
     final caption = (captionText ?? '').trim();
@@ -250,16 +241,11 @@ class RecipeExtractor {
         'Die Caption oft nur für Zutaten und Mengen nutzen.',
         'Nicht eine Standard-Zubereitung erfinden, die im Video so nicht vorkommt.',
       ] else ...[
-        'Es gibt KEINEN gesprochenen Text und KEIN Video in den Quellen.',
-        if (captionMostlyIngredients)
-          'Die Caption enthält vermutlich nur Zutaten/Mengen, keine Zubereitung.',
-        'Für steps: KEINE detaillierte Kochshow aus dem Kopf erfinden.',
-        'Stattdessen kurze Platzhalter-Schritte '
-            '(z. B. „Wie im Video vorbereitet — bitte Video anhängen '
-            'oder Schritte selbst eintragen.“).',
-        'In notes klar schreiben: Die Zubereitung wird im Video gesprochen; '
-            'ohne Video/Ton kann sie nicht zuverlässig übernommen werden.',
-        'Zutaten und Mengen aus der Caption trotzdem so genau wie möglich übernehmen.',
+        'Es gibt kein Video/Ton — nur Text (Caption).',
+        'Erstelle daraus ein nachkochbares Rezept: Zutaten genau übernehmen.',
+        'Für steps: sinnvolle, kurze Schritte für GENAU DIESES Gericht '
+            '(passend zu Titel und Zutaten). Kein anderes Gericht erfinden.',
+        'In notes schreiben: „Bitte mit Originalvideo abgleichen.“',
       ],
       if (hasSpokenSource)
         'Fehlen einzelne Mengen: nur für DIESES Gericht typisch ergänzen '
@@ -291,54 +277,14 @@ class RecipeExtractor {
     }
 
     try {
-      // Gemini: Video direkt mitschicken (sieht + hört mit).
+      // Optional: wenn jemand ein Video mitgeteilt hat (selten), Gemini nutzen.
       if (hasVideo && provider == AiProvider.gemini) {
-        try {
-          final recipe = await _extractWithGeminiVideo(
-            combinedText: combinedForAi,
-            sourceUrl: url,
-            apiKey: apiKey.trim(),
-            videoBytes: videoBytes,
-            videoMimeType: videoMimeType ?? 'video/mp4',
-            titleFallback: dishTitle,
-          );
-          return _finalizeAiRecipe(
-            recipe,
-            titleFallback: dishTitle,
-            captionMostlyIngredients: captionMostlyIngredients,
-            hasSpokenSource: hasSpokenSource,
-          );
-        } catch (e) {
-          if (_isRateLimitFailure(e)) {
-            debugPrint(
-              '[KI] Gemini Video-Pfad: Limit (429) — Fallback-Kette…',
-            );
-            final fallbackRecipe = await _fallbackService.runAfterGeminiLimit(
-              keys: fallbackKeys ?? FallbackApiKeys.fromEnvironment(),
-              caption: effectiveCaption,
-              sourceUrl: url,
-              titleFallback: dishTitle,
-              dishContext: sources,
-              videoBytes: videoBytes,
-              videoFileName: videoFileName,
-            );
-            return _finalizeAiRecipe(
-              fallbackRecipe,
-              titleFallback: dishTitle,
-              captionMostlyIngredients: false,
-              hasSpokenSource: true,
-            );
-          }
-          rethrow;
-        }
-      }
-
-      try {
-        final recipe = await _extractWithAi(
-          provider: provider,
+        final recipe = await _extractWithGeminiVideo(
           combinedText: combinedForAi,
           sourceUrl: url,
           apiKey: apiKey.trim(),
+          videoBytes: videoBytes,
+          videoMimeType: videoMimeType ?? 'video/mp4',
           titleFallback: dishTitle,
         );
         return _finalizeAiRecipe(
@@ -347,30 +293,21 @@ class RecipeExtractor {
           captionMostlyIngredients: captionMostlyIngredients,
           hasSpokenSource: hasSpokenSource,
         );
-      } catch (e) {
-        if (provider == AiProvider.gemini && _isRateLimitFailure(e)) {
-          debugPrint(
-            '[KI] Gemini Text-Pfad: Limit (429) — Fallback-Kette…',
-          );
-          final fallbackRecipe = await _fallbackService.runAfterGeminiLimit(
-            keys: fallbackKeys ?? FallbackApiKeys.fromEnvironment(),
-            caption: effectiveCaption,
-            sourceUrl: url,
-            titleFallback: dishTitle,
-            dishContext: sources,
-            videoBytes: hasVideo ? videoBytes : null,
-            videoFileName: videoFileName,
-          );
-          return _finalizeAiRecipe(
-            fallbackRecipe,
-            titleFallback: dishTitle,
-            captionMostlyIngredients: false,
-            hasSpokenSource: hasVideo ||
-                (fallbackRecipe.notes?.contains('Groq') ?? false),
-          );
-        }
-        rethrow;
       }
+
+      final recipe = await _extractWithAi(
+        provider: provider,
+        combinedText: combinedForAi,
+        sourceUrl: url,
+        apiKey: apiKey.trim(),
+        titleFallback: dishTitle,
+      );
+      return _finalizeAiRecipe(
+        recipe,
+        titleFallback: dishTitle,
+        captionMostlyIngredients: captionMostlyIngredients,
+        hasSpokenSource: hasSpokenSource,
+      );
     } catch (e) {
       // Bei Limit/Guthaben: kein erfundenes Platzhalter-Rezept speichern.
       if (_isHardAiFailure(e)) {
@@ -390,15 +327,6 @@ class RecipeExtractor {
     }
   }
 
-  bool _isRateLimitFailure(Object error) {
-    final lower = error.toString().toLowerCase();
-    return lower.contains('429') ||
-        lower.contains('limit erreicht') ||
-        lower.contains('resource_exhausted') ||
-        lower.contains('too many') ||
-        lower.contains('rate limit');
-  }
-
   /// Limit, Guthaben, ungültiger Schlüssel → Nutzer soll warten/aufladen, nicht speichern.
   bool _isHardAiFailure(Object error) {
     final lower = error.toString().toLowerCase();
@@ -414,7 +342,8 @@ class RecipeExtractor {
         lower.contains('without berechtigung');
   }
 
-  /// Nach KI-Antwort: nutzlosen Titel korrigieren, ohne Video keine erfundenen Schritte.
+  /// Nach KI-Antwort: nutzlosen Titel korrigieren.
+  /// Caption-first: KI darf aus Zutaten + Gerichtsnamen Schritte vorschlagen.
   Recipe _finalizeAiRecipe(
     Recipe recipe, {
     required String titleFallback,
@@ -429,28 +358,12 @@ class RecipeExtractor {
     }
 
     if (!hasSpokenSource && captionMostlyIngredients) {
-      final looksLikePlaceholder = recipe.steps.any(
-        (s) =>
-            s.toLowerCase().contains('video') ||
-            s.toLowerCase().contains('platzhalter') ||
-            s.toLowerCase().contains('selbst eintragen') ||
-            s.toLowerCase().contains('im video'),
-      );
-      if (!looksLikePlaceholder && recipe.steps.length >= 3) {
-        return recipe.copyWith(
-          title: title,
-          steps: const [
-            'Die Zubereitung steht nur im Video (gesprochen).',
-            'Bitte „Video vom Link laden“ oder Video anhängen und mit Gemini erneut erstellen.',
-            'Bis dahin: Originalvideo beim Kochen offen lassen.',
-          ],
-          notes: [
-            if (recipe.notes != null && recipe.notes!.isNotEmpty) recipe.notes!,
-            'Schritte wurden nicht übernommen, weil in der Caption nur Zutaten '
-                'standen und kein Video/Ton ausgewertet werden konnte.',
-          ].join(' '),
-        );
-      }
+      final notes = [
+        if (recipe.notes != null && recipe.notes!.isNotEmpty) recipe.notes!,
+        'Schritte aus Caption/Zutaten vorgeschlagen — bitte mit dem Video '
+            'kurz abgleichen und bei Bedarf unter „Alles bearbeiten“ anpassen.',
+      ].join(' ');
+      return recipe.copyWith(title: title, notes: notes);
     }
 
     return title != recipe.title ? recipe.copyWith(title: title) : recipe;
@@ -722,11 +635,10 @@ class RecipeExtractor {
       'als title. '
       'Niemals ein anderes klassisches Rezept erfinden, nur weil der '
       'Link wenig Text enthält. '
-      'Zubereitungsschritte: Nur aus gesprochenem Ton, Untertiteln '
-      'oder klarer Caption-Anleitung. '
-      'Wenn nur Zutatenliste ohne Ton/Video: keine erfundene Kochshow, '
-      'sondern kurze Platzhalter-Schritte und Hinweis in notes. '
-      'Nutze Caption vor allem für Zutaten/Mengen. '
+      'Hauptquelle ist der Caption-Text (Zutaten + ggf. Anleitung). '
+      'Wenn nur Zutaten + Gerichtsname da sind: passende kurze Schritte '
+      'für GENAU DIESES Gericht vorschlagen und in notes bitten, '
+      'mit dem Originalvideo abzugleichen. '
       'Schreibe klare, kurze Kochschritte.';
 
   Future<Recipe> _extractWithAi({

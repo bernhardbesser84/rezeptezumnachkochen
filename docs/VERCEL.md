@@ -32,15 +32,9 @@ Danach bekommst du eine Adresse wie:
 
 1. Diese Adresse in **Safari** öffnen
 2. Teilen → **Zum Home-Bildschirm**
-3. Rezept-Links kopieren und in der App einfügen
+3. Caption unter dem Video kopieren und in der App einfügen
 
 ## Hinweis
 
 - Für Vercel reicht die kostenlose Stufe
 - Kein Apple-Abo nötig
-- Optional: In Vercel → Project → Settings → Environment Variables
-  `GROQ_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY` setzen
-  (siehe `.env.example`). Die Web-App liest sie beim Build ein.
-  Auf dem Handy kannst du dieselben Keys auch unter **Einstellungen**
-  speichern (Fallback bei Gemini-Limit).
-- Galaxy/Tablett bleiben bei der Android-App; Sync über Familie/Cloud
