@@ -1,10 +1,15 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 /// Holt Untertitel / Transkript aus Videos, soweit möglich.
+///
+/// - Im Browser (Web): über `/api/fetch-transcript` (Vercel), ohne CORS.
+/// - In der App (Android/iOS): direkt vom Gerät.
 class MediaTranscriptService {
-  MediaTranscriptService({http.Client? client}) : _client = client ?? http.Client();
+  MediaTranscriptService({http.Client? client})
+      : _client = client ?? http.Client();
 
   final http.Client _client;
 
@@ -13,6 +18,39 @@ class MediaTranscriptService {
     final videoId = _youtubeId(url);
     if (videoId == null) return null;
 
+    if (kIsWeb) {
+      return _fetchYoutubeTranscriptViaApi(url);
+    }
+    return _fetchYoutubeTranscriptDirect(videoId, url);
+  }
+
+  Future<String?> _fetchYoutubeTranscriptViaApi(String url) async {
+    try {
+      final endpoint = Uri.parse('/api/fetch-transcript').replace(
+        queryParameters: {'url': url},
+      );
+      final response = await _client
+          .get(endpoint)
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+
+      final body = jsonDecode(utf8.decode(response.bodyBytes))
+          as Map<String, dynamic>;
+      final transcript = (body['transcript'] as String?)?.trim() ?? '';
+      if (transcript.isEmpty) return null;
+      return transcript;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _fetchYoutubeTranscriptDirect(
+    String videoId,
+    String url,
+  ) async {
     try {
       final watch = await _client
           .get(
@@ -103,6 +141,9 @@ class MediaTranscriptService {
     return null;
   }
 
+  @visibleForTesting
+  String? youtubeIdForTest(String url) => _youtubeId(url);
+
   String? _findCaptionTrackUrl(String html) {
     // captionTracks in ytInitialPlayerResponse
     final match = RegExp(
@@ -111,7 +152,11 @@ class MediaTranscriptService {
     ).firstMatch(html);
     if (match == null) return null;
     try {
-      final raw = match.group(1)!;
+      final raw = match
+          .group(1)!
+          .replaceAll(r'\u0026', '&')
+          .replaceAll(r'\u003d', '=')
+          .replaceAll(r'\/', '/');
       final list = jsonDecode(raw) as List<dynamic>;
       if (list.isEmpty) return null;
 
@@ -125,7 +170,12 @@ class MediaTranscriptService {
         }
         preferred ??= item;
       }
-      final baseUrl = preferred?['baseUrl'] as String?;
+      var baseUrl = preferred?['baseUrl'] as String?;
+      if (baseUrl == null || baseUrl.isEmpty) return null;
+      baseUrl = baseUrl
+          .replaceAll(r'\u0026', '&')
+          .replaceAll(r'\u003d', '=')
+          .replaceAll(r'\/', '/');
       return baseUrl;
     } catch (_) {
       return null;

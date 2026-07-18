@@ -441,20 +441,22 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                 Text(
                   webHint
                       ? '1. Video-Link einfügen.\n'
-                          '2. Caption wird oft automatisch geladen '
+                          '2. Caption/Beschreibung wird oft automatisch geladen '
                           '(Button „Caption vom Link laden“).\n'
                           '3. Optional: Video-Datei anhängen.\n'
                           '4. Anleitung erstellen — fehlende Mengen ergänzt die KI.\n\n'
                           'Tipp Facebook: Wenn die Caption leer bleibt, '
-                          'kopiere den Text unter dem Reel manuell — '
-                          'sonst rät die KI leicht daneben.'
+                          'kopiere den Text unter dem Reel manuell.\n'
+                          'Tipp YouTube Shorts: Titel antippen → Beschreibung → '
+                          '„…mehr“ → ganzen Text kopieren.'
                       : '1. Video teilen oder Link einfügen.\n'
                           '2. Caption vom Link laden (oder selbst einfügen).\n'
                           '3. Optional Video anhängen für Ton + Bild.\n'
                           '4. Anleitung erstellen — fehlende Infos ergänzt die KI.\n\n'
                           'Tipp Facebook: Wenn die Caption leer bleibt, '
-                          'kopiere den Text unter dem Reel manuell — '
-                          'sonst rät die KI leicht daneben.',
+                          'kopiere den Text unter dem Reel manuell.\n'
+                          'Tipp YouTube Shorts: Titel antippen → Beschreibung → '
+                          '„…mehr“ → ganzen Text kopieren.',
                 ),
               ],
             ),
@@ -502,9 +504,9 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             maxLines: 12,
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
-              labelText: 'Text unter dem Video (Caption)',
+              labelText: 'Caption / YouTube-Beschreibung',
               hintText:
-                  'Wird oft automatisch vom Link geladen — bitte prüfen',
+                  'Facebook: Text unter dem Video. YouTube: Beschreibung („…mehr“).',
               alignLabelWithHint: true,
             ),
           ),
@@ -670,9 +672,10 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Tipp: Zutaten stehen oft in der Caption — die Zubereitung '
+            'Tipp: Zutaten stehen oft in Caption/Beschreibung — die Zubereitung '
             'wird meist gesprochen. Dann Video anhängen (Gemini). '
-            'YouTube liefert oft Untertitel automatisch.',
+            'YouTube: Beschreibung automatisch laden oder manuell über '
+            'Titel → Beschreibung → „…mehr“. Untertitel helfen bei Schritten.',
           ),
         ],
       ),

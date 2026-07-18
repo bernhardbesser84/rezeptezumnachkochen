@@ -169,33 +169,215 @@ function stripFacebookViewsPrefix(raw) {
   return t;
 }
 
-async function fetchYoutube(url) {
-  const { html } = await fetchHtml(url);
-  const title = meta(html, 'og:title') || tagText(html, 'title') || '';
-  let caption =
-    shortDescriptionFromPlayer(html) ||
-    meta(html, 'og:description') ||
-    metaName(html, 'description') ||
-    '';
+const YOUTUBE_MANUAL_HINT =
+  'YouTube-Beschreibung konnte nicht geladen werden. '
+  + 'Bitte auf dem Short den Titel antippen → Beschreibung → „…mehr“, '
+  + 'dann den ganzen Text kopieren und hier einfügen.';
 
-  caption = decodeEntities(caption).trim();
+async function fetchYoutube(url) {
+  const videoId = youtubeVideoId(url);
+  if (!videoId) {
+    return {
+      title: '',
+      caption: '',
+      source: 'none',
+      warning: 'Das sieht nicht nach einem YouTube-Link aus.',
+    };
+  }
+
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const agents = [
+    UA_MOBILE,
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  ];
+
+  // 1) Watch-HTML: nur echte Player-Daten mit playability OK nutzen.
+  //    Platzhalter wie „Teile deine Videos…“ / Titel „YouTube“ verwerfen.
+  for (const agent of agents) {
+    try {
+      const { html } = await fetchHtml(watchUrl, agent);
+      const fromPlayer = detailsFromPlayerResponse(html);
+      if (fromPlayer && !isYoutubeGarbage(fromPlayer.title, fromPlayer.caption)) {
+        return {
+          title: fromPlayer.title,
+          caption: fromPlayer.caption,
+          source: 'youtube-player',
+        };
+      }
+    } catch (_) {
+      // Nächsten UA versuchen.
+    }
+  }
+
+  // 2) Innertube (ANDROID) — oft robuster als Meta-Tags.
+  try {
+    const fromApi = await youtubeDetailsFromInnertube(videoId);
+    if (fromApi && !isYoutubeGarbage(fromApi.title, fromApi.caption)) {
+      return {
+        title: fromApi.title,
+        caption: fromApi.caption,
+        source: 'youtube-innertube',
+      };
+    }
+  } catch (_) {
+    // Fallback unten.
+  }
+
+  // 3) oEmbed liefert zuverlässig den Titel (nicht die volle Beschreibung).
+  const oembedTitle = await youtubeOEmbedTitle(watchUrl);
   return {
-    title: decodeEntities(title).trim(),
-    caption,
-    source: caption ? 'youtube' : 'none',
+    title: oembedTitle,
+    caption: '',
+    source: 'none',
+    warning: YOUTUBE_MANUAL_HINT,
   };
 }
 
-function shortDescriptionFromPlayer(html) {
-  const m = html.match(/"shortDescription":"(.*?)"/);
-  if (!m) return '';
+function youtubeVideoId(url) {
   try {
-    return JSON.parse(`"${m[1]}"`);
+    const uri = new URL(url.trim());
+    const host = uri.hostname.replace(/^www\./, '').toLowerCase();
+    if (host === 'youtu.be') {
+      const id = uri.pathname.split('/').filter(Boolean)[0];
+      return id && id.length >= 6 ? id : null;
+    }
+    if (host.includes('youtube.com')) {
+      const v = uri.searchParams.get('v');
+      if (v) return v;
+      const parts = uri.pathname.split('/').filter(Boolean);
+      if (
+        parts.length >= 2
+        && (parts[0] === 'shorts' || parts[0] === 'embed' || parts[0] === 'live')
+      ) {
+        return parts[1];
+      }
+    }
   } catch (_) {
-    return m[1]
-      .replace(/\\n/g, '\n')
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, '\\');
+    return null;
+  }
+  return null;
+}
+
+function isYoutubeGarbage(title, caption) {
+  const t = (title || '').trim().toLowerCase();
+  const c = (caption || '').trim().toLowerCase();
+  if (!c) return true;
+  if (t === 'youtube' || t === 'youtube.com') return true;
+  if (c.includes('teile deine videos mit freunden')) return true;
+  if (c.includes('enjoy the videos and music you love')) return true;
+  if (c.includes('share your videos with friends, family')) return true;
+  return false;
+}
+
+function detailsFromPlayerResponse(html) {
+  const json = extractYtInitialPlayerResponse(html);
+  if (!json) return null;
+  const status = String(json?.playabilityStatus?.status || '');
+  // Nur OK-Antworten vertrauen — sonst liefert YouTube Fake-Beschreibungen.
+  if (status && status !== 'OK') return null;
+  const title = decodeEntities(String(json?.videoDetails?.title || '')).trim();
+  const caption = decodeEntities(
+    String(json?.videoDetails?.shortDescription || ''),
+  ).trim();
+  if (!title && !caption) return null;
+  return { title, caption };
+}
+
+function extractYtInitialPlayerResponse(html) {
+  const marker = 'ytInitialPlayerResponse';
+  const idx = html.indexOf(marker);
+  if (idx < 0) return null;
+  const eq = html.indexOf('=', idx + marker.length);
+  if (eq < 0) return null;
+  let i = eq + 1;
+  while (i < html.length && /\s/.test(html[i])) i += 1;
+  if (html[i] !== '{') return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let j = i; j < html.length; j += 1) {
+    const ch = html[j];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(i, j + 1));
+        } catch (_) {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+async function youtubeDetailsFromInnertube(videoId) {
+  const response = await fetch(
+    'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent':
+          'com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip',
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: 'ANDROID',
+            clientVersion: '20.10.38',
+            androidSdkVersion: 30,
+            hl: 'de',
+            gl: 'DE',
+          },
+        },
+        videoId,
+        contentCheckOk: true,
+        racyCheckOk: true,
+      }),
+    },
+  );
+  if (!response.ok) return null;
+  const json = await response.json();
+  const status = String(json?.playabilityStatus?.status || '');
+  if (status && status !== 'OK') return null;
+  const title = decodeEntities(String(json?.videoDetails?.title || '')).trim();
+  const caption = decodeEntities(
+    String(json?.videoDetails?.shortDescription || ''),
+  ).trim();
+  if (!title && !caption) return null;
+  return { title, caption };
+}
+
+async function youtubeOEmbedTitle(watchUrl) {
+  try {
+    const endpoint =
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}`
+      + '&format=json';
+    const response = await fetch(endpoint, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) return '';
+    const data = await response.json();
+    return decodeEntities(String(data.title || '')).trim();
+  } catch (_) {
+    return '';
   }
 }
 

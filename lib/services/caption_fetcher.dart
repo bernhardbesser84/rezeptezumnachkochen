@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'recipe_extractor.dart';
+import 'youtube_caption.dart';
 
 class FetchedCaption {
   const FetchedCaption({
@@ -68,14 +69,27 @@ class CaptionFetcher {
     final source = (body['source'] as String?)?.trim() ?? 'none';
     final warning = (body['warning'] as String?)?.trim();
 
+    // Server kann Platzhalter liefern — lokal nochmals prüfen.
+    if (isYoutubeUrl(url) &&
+        isYoutubeGarbageCaption(title: title, caption: caption)) {
+      return FetchedCaption(
+        title: title == 'YouTube' || title == 'youtube' ? '' : title,
+        caption: '',
+        source: 'none',
+        warning: warning?.isNotEmpty == true ? warning : kYoutubeManualHint,
+      );
+    }
+
     if (caption.isEmpty) {
       return FetchedCaption(
         title: title,
         caption: '',
         source: source,
         warning: warning ??
-            'Kein Beschreibungstext gefunden. '
-                'Bei Instagram/TikTok den Text unter dem Video bitte manuell kopieren.',
+            (isYoutubeUrl(url)
+                ? kYoutubeManualHint
+                : 'Kein Beschreibungstext gefunden. '
+                    'Bei Instagram/TikTok den Text unter dem Video bitte manuell kopieren.'),
       );
     }
 
@@ -89,6 +103,10 @@ class CaptionFetcher {
 
   Future<FetchedCaption> _fetchDirect(String url) async {
     final host = Uri.parse(url).host.replaceFirst('www.', '').toLowerCase();
+
+    if (isYoutubeUrl(url)) {
+      return _fetchYoutubeDirect(url);
+    }
 
     // TikTok oEmbed (Titel = Caption)
     if (host.contains('tiktok.com')) {
@@ -105,16 +123,9 @@ class CaptionFetcher {
       }
     }
 
-    // HTML / Meta / YouTube shortDescription
+    // HTML / Meta
     final preview = await _extractor.fetchPagePreview(url);
     var caption = preview.description.trim();
-
-    if (host.contains('youtube.com') || host == 'youtu.be') {
-      final ytDesc = await _youtubeShortDescription(url);
-      if (ytDesc != null && ytDesc.trim().isNotEmpty) {
-        caption = ytDesc.trim();
-      }
-    }
 
     // Facebook: Beschreibung oft abgeschnitten — längeren Titel-Text nutzen.
     if (host.contains('facebook.com') || host == 'fb.watch' || host == 'fb.com') {
@@ -141,43 +152,74 @@ class CaptionFetcher {
     return FetchedCaption(
       title: preview.title,
       caption: caption,
-      source: host.contains('youtube')
-          ? 'youtube'
-          : host.contains('facebook')
-              ? 'facebook-og'
-              : 'og',
+      source: host.contains('facebook') ? 'facebook-og' : 'og',
     );
   }
 
-  Future<String?> _youtubeShortDescription(String url) async {
-    try {
-      final response = await _client
-          .get(
-            Uri.parse(url),
-            headers: {
-              'User-Agent':
-                  'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
-                      '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-              'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
-            },
-          )
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode < 200 || response.statusCode >= 400) return null;
-      final match =
-          RegExp(r'"shortDescription":"(.*?)"').firstMatch(response.body);
-      if (match == null) return null;
-      try {
-        return jsonDecode('"${match.group(1)}"') as String;
-      } catch (_) {
-        return match
-            .group(1)!
-            .replaceAll(r'\n', '\n')
-            .replaceAll(r'\"', '"')
-            .replaceAll(r'\\', r'\');
-      }
-    } catch (_) {
-      return null;
+  Future<FetchedCaption> _fetchYoutubeDirect(String url) async {
+    final videoId = youtubeVideoId(url);
+    if (videoId == null) {
+      return const FetchedCaption(
+        title: '',
+        caption: '',
+        source: 'none',
+        warning: 'Das sieht nicht nach einem YouTube-Link aus.',
+      );
     }
+
+    final watchUrl = 'https://www.youtube.com/watch?v=$videoId';
+    const userAgents = [
+      'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
+          '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    ];
+
+    for (final userAgent in userAgents) {
+      try {
+        final response = await _client
+            .get(
+              Uri.parse(watchUrl),
+              headers: {
+                'User-Agent': userAgent,
+                'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml',
+              },
+            )
+            .timeout(const Duration(seconds: 20));
+        if (response.statusCode < 200 || response.statusCode >= 400) {
+          continue;
+        }
+        final details = youtubeDetailsFromPlayerHtml(response.body);
+        if (details != null &&
+            !isYoutubeGarbageCaption(
+              title: details.title,
+              caption: details.caption,
+            )) {
+          return FetchedCaption(
+            title: details.title,
+            caption: details.caption,
+            source: 'youtube-player',
+          );
+        }
+      } catch (_) {
+        // Nächsten User-Agent versuchen.
+      }
+    }
+
+    // oEmbed: zumindest Titel — Beschreibung muss ggf. manuell rein.
+    final oembed = await _getJson(
+      'https://www.youtube.com/oembed'
+      '?url=${Uri.encodeComponent(watchUrl)}&format=json',
+    );
+    final title = (oembed?['title'] as String?)?.trim() ?? '';
+
+    return FetchedCaption(
+      title: title,
+      caption: '',
+      source: 'none',
+      warning: kYoutubeManualHint,
+    );
   }
 
   Future<Map<String, dynamic>?> _getJson(String url) async {
