@@ -1,17 +1,19 @@
 /// Vorgefertigte Supabase-Cloud für „Rezept Nachkochen“.
 ///
-/// URL kommt aus dem Projekt. Der öffentliche anon-Key kann per
-/// `--dart-define=SUPABASE_ANON_KEY=...` (z. B. Vercel) gesetzt werden
-/// oder später in der App eingetragen werden.
+/// Öffentlicher publishable/anon-Key (kein Service-Role-Geheimnis).
+/// Per `--dart-define=SUPABASE_ANON_KEY=...` überschreibbar (z. B. Vercel).
 class SupabaseDefaults {
   static const projectRef = 'ecnysosvuxusdnuvnrly';
 
   static const url = 'https://ecnysosvuxusdnuvnrly.supabase.co';
 
-  /// Öffentlicher anon/public Key (kein Geheimnis wie ein Service-Role-Key).
+  static const _defaultAnonKey =
+      'sb_publishable_1jIQXqud7qg5P5jG681iXw_K1njD8Zc';
+
+  /// Öffentlicher anon/publishable Key.
   static const anonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: '',
+    defaultValue: _defaultAnonKey,
   );
 
   static bool get hasBuiltInKey => anonKey.trim().isNotEmpty;

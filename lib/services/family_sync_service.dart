@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/family_config.dart';
 import '../models/recipe.dart';
@@ -168,6 +169,20 @@ class FamilySyncService {
       return 'Cloud-Adresse oder Schlüssel fehlen.';
     }
     try {
+      // Bevorzugt den offiziellen Supabase-Client (nach Supabase.initialize).
+      try {
+        final client = Supabase.instance.client;
+        await client
+            .from('recipes')
+            .select('id')
+            .eq('family_code', config.familyCode)
+            .limit(1)
+            .timeout(const Duration(seconds: 12));
+        return null;
+      } catch (_) {
+        // Fallback: direkte REST-Anfrage (z. B. in Tests ohne initialize).
+      }
+
       final uri = _rest(
         config,
         'recipes',
@@ -183,9 +198,22 @@ class FamilySyncService {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return null;
       }
+      final body = response.body.toLowerCase();
+      if (response.statusCode == 404 &&
+          (body.contains('pgrst205') || body.contains('could not find the table'))) {
+        return 'Cloud ist erreichbar, aber die Tabellen fehlen noch. '
+            'Bitte in Supabase einmalig die Datei supabase/schema.sql '
+            'im SQL-Editor ausführen (Run).';
+      }
       return 'Cloud antwortet mit Code ${response.statusCode}. '
-          'Prüfe URL, Schlüssel und Tabellen.';
+          'Prüfe URL, Schlüssel und Tabellen (schema.sql).';
     } catch (e) {
+      final text = e.toString().toLowerCase();
+      if (text.contains('pgrst205') || text.contains('could not find the table')) {
+        return 'Cloud ist erreichbar, aber die Tabellen fehlen noch. '
+            'Bitte in Supabase einmalig die Datei supabase/schema.sql '
+            'im SQL-Editor ausführen (Run).';
+      }
       return 'Keine Verbindung zur Cloud: $e';
     }
   }

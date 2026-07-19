@@ -8,5 +8,7 @@ void main() {
       SupabaseDefaults.url,
       'https://ecnysosvuxusdnuvnrly.supabase.co',
     );
+    expect(SupabaseDefaults.hasBuiltInKey, isTrue);
+    expect(SupabaseDefaults.anonKey, startsWith('sb_'));
   });
 }

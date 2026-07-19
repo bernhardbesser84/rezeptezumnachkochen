@@ -347,14 +347,15 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 ),
                 const SizedBox(height: 20),
                 const _InfoCard(
-                  title: 'Einmalig in Supabase (falls noch nicht erledigt)',
+                  title: 'Einmalig in Supabase (Tabellen anlegen)',
                   body:
-                      '1. SQL aus supabase/schema.sql im SQL-Editor ausführen\n'
-                      '2. Unter Project Settings → API den anon public Key kopieren\n'
-                      '3. Hier einfügen (oder als Vercel-Umgebungsvariable '
-                      'SUPABASE_ANON_KEY setzen, dann ist er in der Web-App '
-                      'schon drin)\n'
-                      '4. Denselben Familien-Code auf allen Geräten nutzen',
+                      'URL und Schlüssel sind schon in der App. '
+                      'Falls „Tabellen fehlen“ erscheint:\n\n'
+                      '1. supabase.com → dein Projekt öffnen\n'
+                      '2. Links SQL → New query\n'
+                      '3. Inhalt aus supabase/schema.sql einfügen → Run\n'
+                      '4. Hier zurück: Familien-Code erstellen → '
+                      '„Verbinden & Sync“',
                 ),
               ],
             ),

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'config/supabase_defaults.dart';
 import 'screens/home_screen.dart';
 import 'services/app_repository.dart';
 import 'services/family_sync_service.dart';
@@ -8,8 +10,15 @@ import 'services/recipe_extractor.dart';
 import 'services/recipe_storage.dart';
 import 'theme/app_theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Cloud für Familien-Sync (Rezepte + Einkaufsliste).
+  await Supabase.initialize(
+    url: SupabaseDefaults.url,
+    publishableKey: SupabaseDefaults.anonKey,
+  );
+
   runApp(const RezeptNachkochenApp());
 }
 
