@@ -28,6 +28,18 @@ Danach öffnest du den Vercel-Link in **Safari** und wählst
 
 In der App unter **Familie** denselben Familien-Code und dieselben Cloud-Daten eintragen.
 
+## Wenn die Home-Bildschirm-App „hängt“ (alte Version)
+
+Safari und die App vom Home-Bildschirm können unterschiedliche
+Caches haben. Nach einem Update:
+
+1. App einmal komplett schließen (aus dem App-Umschalter wischen)
+2. Neu öffnen — oben erscheint ggf. **„Update verfügbar“**
+3. Oder unter **Einstellungen → App-Cache leeren & neu laden**
+
+Falls weiterhin Probleme: denselben Link einmal in Safari öffnen,
+dann die Home-Bildschirm-App erneut starten.
+
 ## Lokal testen (am PC)
 
 ```bash
