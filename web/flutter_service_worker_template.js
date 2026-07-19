@@ -1,12 +1,10 @@
 'use strict';
 
 /**
- * Eigener Service Worker mit Build-ID.
+ * Build-ID wird beim Deploy in die Datei geschrieben.
  * - skipWaiting + clients.claim: neue Version übernimmt sofort
  * - Alte Caches werden gelöscht
  * - Network-only: keine stille Offline-App-Version mehr
- *
- * Platzhalter __APP_BUILD_ID__ wird im Vercel-Build ersetzt.
  */
 const APP_BUILD_ID = '__APP_BUILD_ID__';
 const CACHE_NAME = 'rezept-pwa-' + APP_BUILD_ID;
