@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../config/supabase_defaults.dart';
 import '../models/family_config.dart';
 import '../services/app_repository.dart';
 import '../services/family_sync_service.dart';
@@ -24,6 +25,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
   bool _loading = true;
   bool _saving = false;
   bool _obscureKey = false; // Auf dem iPhone sonst oft kein „Einfügen“
+  bool _showAdvancedCloud = false;
   String? _status;
 
   @override
@@ -37,11 +39,19 @@ class _FamilyScreenState extends State<FamilyScreen> {
     if (config != null) {
       _familyCodeController.text = config.familyCode;
       _deviceController.text = config.deviceName;
-      _urlController.text = config.supabaseUrl ?? '';
-      _keyController.text = config.supabaseAnonKey ?? '';
+      _urlController.text = (config.supabaseUrl?.trim().isNotEmpty ?? false)
+          ? config.supabaseUrl!.trim()
+          : SupabaseDefaults.url;
+      _keyController.text = (config.supabaseAnonKey?.trim().isNotEmpty ?? false)
+          ? config.supabaseAnonKey!.trim()
+          : SupabaseDefaults.anonKey;
     } else {
       _deviceController.text = 'Mein Gerät';
+      _urlController.text = SupabaseDefaults.url;
+      _keyController.text = SupabaseDefaults.anonKey;
     }
+    // Wenn die Cloud schon eingebaut ist, Advanced-Felder zu.
+    _showAdvancedCloud = !SupabaseDefaults.hasBuiltInKey;
     if (mounted) setState(() => _loading = false);
   }
 
@@ -76,22 +86,34 @@ class _FamilyScreenState extends State<FamilyScreen> {
       _status = null;
     });
     try {
+      // Leere Felder mit Defaults füllen (URL immer, Key falls eingebaut).
+      final url = _urlController.text.trim().isEmpty
+          ? SupabaseDefaults.url
+          : _urlController.text.trim();
+      final key = _keyController.text.trim().isEmpty
+          ? SupabaseDefaults.anonKey.trim()
+          : _keyController.text.trim();
+
       final config = FamilyConfig(
         familyCode: _familyCodeController.text.trim().toUpperCase(),
         deviceName: _deviceController.text.trim().isEmpty
             ? 'Gerät'
             : _deviceController.text.trim(),
-        supabaseUrl: _urlController.text.trim().isEmpty
-            ? null
-            : _urlController.text.trim(),
-        supabaseAnonKey: _keyController.text.trim().isEmpty
-            ? null
-            : _keyController.text.trim(),
+        supabaseUrl: url.isEmpty ? null : url,
+        supabaseAnonKey: key.isEmpty ? null : key,
         openaiApiKey: (await widget.repository.family())?.openaiApiKey,
       );
 
       if (config.familyCode.isEmpty) {
         throw Exception('Bitte einen Familien-Code eingeben oder erstellen.');
+      }
+
+      if (testAndSync && !config.hasCloud) {
+        throw Exception(
+          'Cloud-Schlüssel fehlt noch. '
+          'Bitte den anon/public Key einmal eintragen '
+          '(oder beim Web-Build als SUPABASE_ANON_KEY setzen).',
+        );
       }
 
       await widget.repository.saveFamily(config);
@@ -106,8 +128,8 @@ class _FamilyScreenState extends State<FamilyScreen> {
         _status = 'Gespeichert. Tippe auf „Verbinden & Sync“, um zu prüfen.';
       } else {
         _status =
-            'Familien-Code gespeichert. Für Handy + Tablett noch Cloud '
-            'eintragen (kostenlos, siehe Anleitung unten).';
+            'Familien-Code gespeichert. Für Sync noch den Cloud-Schlüssel '
+            'eintragen (siehe unten).';
       }
 
       if (mounted) {
@@ -135,6 +157,9 @@ class _FamilyScreenState extends State<FamilyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cloudReady = SupabaseDefaults.hasBuiltInKey ||
+        _keyController.text.trim().isNotEmpty;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Familie verbinden')),
       body: _loading
@@ -149,8 +174,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                       '2. Am Samsung-Tablett öffnet ihr dasselbe Rezept zum Kochen.\n'
                       '3. Auf dem Galaxy-Handy sieht deine Frau die Einkaufsliste '
                       'und hakte ab, was schon im Korb ist.\n\n'
-                      'Dafür brauchen alle Geräte denselben Familien-Code und '
-                      'dieselbe Cloud-Verbindung.',
+                      'Dafür brauchen alle Geräte denselben Familien-Code.',
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -190,68 +214,118 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'Cloud (kostenlos, für Sync)',
+                  'Cloud-Sync',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Einmal bei Supabase (kostenlos) ein Projekt anlegen und die '
-                  'zwei Werte hier eintragen. Anleitung steht in der README '
-                  'und unten kurz zusammengefasst.',
+                _InfoCard(
+                  title: SupabaseDefaults.hasBuiltInKey
+                      ? 'Cloud ist schon in der App hinterlegt'
+                      : 'Cloud-Projekt ist vorbereitet',
+                  body: SupabaseDefaults.hasBuiltInKey
+                      ? 'URL und Schlüssel sind eingebaut. '
+                          'Du brauchst nur denselben Familien-Code auf '
+                          'iPhone, Tablett und Galaxy — dann „Verbinden & Sync“.'
+                      : 'Die Projekt-URL ist schon eingetragen:\n'
+                          '${SupabaseDefaults.url}\n\n'
+                          'Es fehlt noch einmalig der öffentliche anon-Key '
+                          '(Supabase → Project Settings → API → anon public). '
+                          'Danach reicht auf allen Geräten derselbe Familien-Code.',
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _urlController,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  keyboardType: TextInputType.url,
-                  enableInteractiveSelection: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Supabase Project URL',
-                    hintText: 'https://xxxxx.supabase.co',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: _saving
-                      ? null
-                      : () => _pasteInto(_urlController, 'URL'),
-                  icon: const Icon(Icons.content_paste),
-                  label: const Text('URL einfügen'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _keyController,
-                  obscureText: _obscureKey,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  keyboardType: TextInputType.visiblePassword,
-                  enableInteractiveSelection: true,
-                  decoration: InputDecoration(
-                    labelText: 'Supabase anon/public Key',
-                    hintText: 'eyJhbGciOi...',
-                    suffixIcon: IconButton(
-                      onPressed: () =>
-                          setState(() => _obscureKey = !_obscureKey),
-                      icon: Icon(
-                        _obscureKey ? Icons.visibility : Icons.visibility_off,
+                if (!SupabaseDefaults.hasBuiltInKey) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _keyController,
+                    obscureText: _obscureKey,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    keyboardType: TextInputType.visiblePassword,
+                    enableInteractiveSelection: true,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: 'Supabase anon/public Key',
+                      hintText: 'eyJhbGciOi...',
+                      suffixIcon: IconButton(
+                        onPressed: () =>
+                            setState(() => _obscureKey = !_obscureKey),
+                        icon: Icon(
+                          _obscureKey
+                              ? Icons.visibility
+                              : Icons.visibility_off,
+                        ),
                       ),
                     ),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: _saving
+                        ? null
+                        : () => _pasteInto(_keyController, 'Schlüssel'),
+                    icon: const Icon(Icons.content_paste),
+                    label: const Text('Schlüssel einfügen'),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Tipp fürs iPhone: Key zuerst kopieren, dann auf '
+                    '„Schlüssel einfügen“ tippen.',
+                  ),
+                ],
                 const SizedBox(height: 8),
-                FilledButton.tonalIcon(
-                  onPressed: _saving
-                      ? null
-                      : () => _pasteInto(_keyController, 'Schlüssel'),
-                  icon: const Icon(Icons.content_paste),
-                  label: const Text('Schlüssel einfügen'),
+                TextButton(
+                  onPressed: () => setState(
+                    () => _showAdvancedCloud = !_showAdvancedCloud,
+                  ),
+                  child: Text(
+                    _showAdvancedCloud
+                        ? 'Cloud-Details ausblenden'
+                        : 'Cloud-Details anzeigen (für Profis)',
+                  ),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Tipp fürs iPhone: Wert zuerst kopieren, dann auf '
-                  '„… einfügen“ tippen.',
-                ),
+                if (_showAdvancedCloud) ...[
+                  TextField(
+                    controller: _urlController,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    keyboardType: TextInputType.url,
+                    enableInteractiveSelection: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Supabase Project URL',
+                      hintText: 'https://xxxxx.supabase.co',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _saving
+                        ? null
+                        : () => _pasteInto(_urlController, 'URL'),
+                    icon: const Icon(Icons.content_paste),
+                    label: const Text('URL einfügen'),
+                  ),
+                  if (SupabaseDefaults.hasBuiltInKey) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _keyController,
+                      obscureText: _obscureKey,
+                      enableSuggestions: false,
+                      autocorrect: false,
+                      keyboardType: TextInputType.visiblePassword,
+                      enableInteractiveSelection: true,
+                      decoration: InputDecoration(
+                        labelText: 'Supabase anon/public Key',
+                        hintText: 'eyJhbGciOi...',
+                        suffixIcon: IconButton(
+                          onPressed: () =>
+                              setState(() => _obscureKey = !_obscureKey),
+                          icon: Icon(
+                            _obscureKey
+                                ? Icons.visibility
+                                : Icons.visibility_off,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
                 const SizedBox(height: 14),
                 if (_status != null)
                   Padding(
@@ -265,20 +339,22 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 const SizedBox(height: 8),
                 FilledButton.tonal(
                   onPressed: _saving ? null : () => _save(testAndSync: true),
-                  child: const Text('Verbinden & Sync'),
+                  child: Text(
+                    cloudReady
+                        ? 'Verbinden & Sync'
+                        : 'Verbinden & Sync (Key fehlt noch)',
+                  ),
                 ),
                 const SizedBox(height: 20),
                 const _InfoCard(
-                  title: 'Kurz-Anleitung Cloud',
+                  title: 'Einmalig in Supabase (falls noch nicht erledigt)',
                   body:
-                      '1. Auf supabase.com kostenloses Konto erstellen\n'
-                      '2. Neues Projekt anlegen\n'
-                      '3. SQL aus supabase/schema.sql ausführen\n'
-                      '4. Unter Project Settings → API die URL und den '
-                      'anon key kopieren\n'
-                      '5. Hier einfügen und auf „Verbinden & Sync“ tippen\n'
-                      '6. Denselben Code + dieselben Cloud-Daten auf '
-                      'Tablett und Galaxy eintragen',
+                      '1. SQL aus supabase/schema.sql im SQL-Editor ausführen\n'
+                      '2. Unter Project Settings → API den anon public Key kopieren\n'
+                      '3. Hier einfügen (oder als Vercel-Umgebungsvariable '
+                      'SUPABASE_ANON_KEY setzen, dann ist er in der Web-App '
+                      'schon drin)\n'
+                      '4. Denselben Familien-Code auf allen Geräten nutzen',
                 ),
               ],
             ),
