@@ -46,18 +46,12 @@ Nur falls du später doch eine echte iPhone-App willst:
 
 ## Familie & Cloud einrichten (einmalig, kostenlos)
 
-1. Konto auf [supabase.com](https://supabase.com) erstellen  
-2. Neues Projekt anlegen  
-3. Links **SQL** → Editor → Inhalt aus `supabase/schema.sql` einfügen → **Run**  
-4. Links **Project Settings → API**:
-   - Project URL kopieren
-   - `anon` `public` Key kopieren  
-5. In der App: **Familie** öffnen  
-   - Geräte-Name z. B. `Bernhard iPhone`  
-   - Familien-Code erstellen (z. B. `KOCH-4F2A`)  
-   - URL + Key eintragen  
-   - **Verbinden & Sync** tippen  
-6. Denselben Code + URL + Key auf Tablett und Galaxy eintragen  
+URL und Cloud-Schlüssel sind **bereits in der App** hinterlegt.
+
+1. In Supabase einmalig SQL aus `supabase/schema.sql` ausführen  
+   (SQL Editor → einfügen → **Run**) — legt die Tabellen an  
+2. In der App: **Familie** → Geräte-Name → Familien-Code erstellen → **Verbinden & Sync**  
+3. Denselben Familien-Code auf Tablett und Galaxy eintragen  
 
 ## Funktionen
 

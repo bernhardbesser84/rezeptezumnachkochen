@@ -14,4 +14,13 @@ fi
 export PATH="$FLUTTER_DIR/bin:$PATH"
 flutter config --no-analytics
 flutter pub get
-flutter build web --release --base-href "/"
+
+# Optional: öffentlichen Supabase-anon-Key aus Vercel-Env einbauen.
+# In Vercel: Settings → Environment Variables → SUPABASE_ANON_KEY
+DART_DEFINES=()
+if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
+  DART_DEFINES+=(--dart-define="SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
+  echo "Supabase-anon-Key wird in die Web-App eingebaut."
+fi
+
+flutter build web --release --base-href "/" "${DART_DEFINES[@]}"
