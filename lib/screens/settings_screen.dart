@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -6,6 +7,7 @@ import '../services/app_repository.dart';
 import '../services/google_backup_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/clipboard_paste.dart';
+import '../utils/pwa_update.dart';
 import 'family_screen.dart';
 import 'google_backup_screen.dart';
 
@@ -98,6 +100,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _openKeyPage() async {
     final uri = Uri.parse(_provider.keyPageUrl);
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _refreshWebApp() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('App-Cache wird geleert…')),
+    );
+    await applyPwaUpdate();
   }
 
   @override
@@ -225,6 +234,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: _save,
                   child: const Text('Speichern'),
                 ),
+                if (kIsWeb) ...[
+                  const SizedBox(height: 28),
+                  const Text(
+                    'Home-Bildschirm-App (PWA)',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Wenn Fehler wie „Schlüssel ungültig“ nur in der '
+                    'Home-Bildschirm-App erscheinen (nicht in Safari), '
+                    'ist oft eine alte gecachte Version aktiv.\n'
+                    'Aktuelle Build-ID: $kAppBuildId',
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: _refreshWebApp,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('App-Cache leeren & neu laden'),
+                  ),
+                ],
                 const SizedBox(height: 28),
                 Container(
                   padding: const EdgeInsets.all(16),

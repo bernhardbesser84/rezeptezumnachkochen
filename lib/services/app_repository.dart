@@ -1,4 +1,5 @@
 import '../models/family_config.dart';
+import '../models/family_config_cloud.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 import 'family_sync_service.dart';
@@ -17,11 +18,20 @@ class AppRepository {
   final FamilySyncService sync;
   final GoogleBackupService? googleBackup;
 
-  Future<FamilyConfig?> family() => storage.loadFamilyConfig();
+  Future<FamilyConfig?> family() async {
+    final config = await storage.loadFamilyConfig();
+    if (config == null) return null;
+    return config.withEffectiveCloud();
+  }
+
+  FamilyConfig? _cloud(FamilyConfig? config) {
+    if (config == null) return null;
+    return config.withEffectiveCloud();
+  }
 
   Future<List<Recipe>> loadRecipes({bool pullRemote = true}) async {
-    final config = await storage.loadFamilyConfig();
-    if (pullRemote && config != null && config.hasCloud) {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (pullRemote && config != null && config.hasEffectiveCloud) {
       try {
         final remote = await sync.pullRecipes(config);
         if (remote.isNotEmpty) {
@@ -37,8 +47,8 @@ class AppRepository {
 
   Future<void> saveRecipe(Recipe recipe) async {
     await storage.upsertRecipe(recipe);
-    final config = await storage.loadFamilyConfig();
-    if (config != null && config.hasCloud) {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config != null && config.hasEffectiveCloud) {
       await sync.pushRecipe(config, recipe);
     }
     await _backupQuietly();
@@ -46,16 +56,16 @@ class AppRepository {
 
   Future<void> deleteRecipe(String id) async {
     await storage.deleteRecipe(id);
-    final config = await storage.loadFamilyConfig();
-    if (config != null && config.hasCloud) {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config != null && config.hasEffectiveCloud) {
       await sync.deleteRecipe(config, id);
     }
     await _backupQuietly();
   }
 
   Future<List<ShoppingItem>> loadShopping({bool pullRemote = true}) async {
-    final config = await storage.loadFamilyConfig();
-    if (pullRemote && config != null && config.hasCloud) {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (pullRemote && config != null && config.hasEffectiveCloud) {
       try {
         final remote = await sync.pullShoppingItems(config);
         await storage.saveShoppingItems(remote);
@@ -73,8 +83,8 @@ class AppRepository {
       updatedAt: DateTime.now(),
     );
     await storage.upsertShoppingItem(updated);
-    final config = await storage.loadFamilyConfig();
-    if (config != null && config.hasCloud) {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config != null && config.hasEffectiveCloud) {
       await sync.pushShoppingItem(config, updated);
     }
     await _backupQuietly();
@@ -82,8 +92,8 @@ class AppRepository {
 
   Future<void> deleteShoppingItem(String id) async {
     await storage.deleteShoppingItem(id);
-    final config = await storage.loadFamilyConfig();
-    if (config != null && config.hasCloud) {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config != null && config.hasEffectiveCloud) {
       await sync.deleteShoppingItem(config, id);
     }
     await _backupQuietly();
@@ -93,8 +103,8 @@ class AppRepository {
     final items = await storage.loadShoppingItems();
     final checked = items.where((e) => e.checked).toList();
     await storage.clearCheckedShoppingItems();
-    final config = await storage.loadFamilyConfig();
-    if (config != null && config.hasCloud) {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config != null && config.hasEffectiveCloud) {
       for (final item in checked) {
         await sync.deleteShoppingItem(config, item.id);
       }
@@ -104,8 +114,8 @@ class AppRepository {
 
   Future<int> addRecipeToShopping(Recipe recipe) async {
     final added = await storage.addRecipeIngredientsToShopping(recipe);
-    final config = await storage.loadFamilyConfig();
-    if (config != null && config.hasCloud) {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config != null && config.hasEffectiveCloud) {
       for (final item in added) {
         await sync.pushShoppingItem(config, item);
       }
@@ -115,13 +125,13 @@ class AppRepository {
   }
 
   Future<void> saveFamily(FamilyConfig config) async {
-    await storage.saveFamilyConfig(config);
+    await storage.saveFamilyConfig(config.withEffectiveCloud());
     await _backupQuietly();
   }
 
   Future<void> fullSync() async {
-    final config = await storage.loadFamilyConfig();
-    if (config == null || !config.hasCloud) return;
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config == null || !config.hasEffectiveCloud) return;
 
     final localRecipes = await storage.loadRecipes();
     final localShopping = await storage.loadShoppingItems();
