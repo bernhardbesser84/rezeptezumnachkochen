@@ -20,7 +20,7 @@ enum AiProvider {
       case AiProvider.openai:
         return 'sk-...';
       case AiProvider.gemini:
-        return 'AIza...';
+        return 'AIza… oder AQ.…';
       case AiProvider.claude:
         return 'sk-ant-...';
     }

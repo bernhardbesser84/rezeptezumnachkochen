@@ -31,6 +31,10 @@ if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
   DART_DEFINES+=(--dart-define="SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY")
   echo "Supabase-anon-Key wird aus Vercel-Env eingebaut."
 fi
+if [ -n "${GEMINI_API_KEY:-}" ]; then
+  DART_DEFINES+=(--dart-define="GEMINI_API_KEY=$GEMINI_API_KEY")
+  echo "Gemini-API-Key wird aus Vercel-Env eingebaut."
+fi
 
 flutter build web --release --base-href "/" "${DART_DEFINES[@]}"
 

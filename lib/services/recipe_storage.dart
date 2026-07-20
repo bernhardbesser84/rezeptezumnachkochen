@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../config/gemini_defaults.dart';
 import '../models/ai_provider.dart';
 import '../models/family_config.dart';
 import '../models/recipe.dart';
@@ -155,7 +156,14 @@ class RecipeStorage {
 
   Future<AiProvider> getAiProvider() async {
     final prefs = await SharedPreferences.getInstance();
-    return AiProvider.fromStorage(prefs.getString(_aiProviderKey));
+    final raw = prefs.getString(_aiProviderKey);
+    // Noch nichts gewählt → Gemini, wenn der Schlüssel eingebaut ist.
+    if (raw == null || raw.trim().isEmpty) {
+      return GeminiDefaults.hasBuiltInKey
+          ? AiProvider.gemini
+          : AiProvider.openai;
+    }
+    return AiProvider.fromStorage(raw);
   }
 
   Future<void> setAiProvider(AiProvider provider) async {
@@ -178,7 +186,14 @@ class RecipeStorage {
       }
     }
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(provider.storageKey);
+    final stored = prefs.getString(provider.storageKey)?.trim();
+    if (stored != null && stored.isNotEmpty) return stored;
+
+    // Gemini: eingebauter Schlüssel, falls lokal nichts eingetragen ist.
+    if (provider == AiProvider.gemini && GeminiDefaults.hasBuiltInKey) {
+      return GeminiDefaults.apiKey;
+    }
+    return null;
   }
 
   Future<void> setApiKey(String? key) async {
