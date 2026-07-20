@@ -13,6 +13,7 @@ import '../services/google_backup_service.dart';
 import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
+import '../widgets/pwa_update_banner.dart';
 import 'add_recipe_screen.dart';
 import 'family_screen.dart';
 import 'recipe_detail_screen.dart';
@@ -324,6 +325,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: const EdgeInsets.fromLTRB(20, 8, 20, 110),
                     children: [
                       if (PlatformHints.isWeb) ...[
+                        const PwaUpdateBanner(),
+                        const SizedBox(height: 14),
                         _WebInstallBanner(
                           onOpenHelp: () {
                             Navigator.of(context).push(

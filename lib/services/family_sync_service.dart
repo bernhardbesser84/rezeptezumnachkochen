@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/family_config.dart';
+import '../models/family_config_cloud.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 
@@ -14,19 +15,22 @@ class FamilySyncService {
 
   final http.Client _client;
 
+  FamilyConfig _cfg(FamilyConfig config) => config.withEffectiveCloud();
+
   Uri _rest(
     FamilyConfig config,
     String table, {
     Map<String, String>? query,
   }) {
-    final base = config.supabaseUrl!.trim().replaceAll(RegExp(r'/+$'), '');
+    final cloud = _cfg(config);
+    final base = cloud.effectiveSupabaseUrl.replaceAll(RegExp(r'/+$'), '');
     return Uri.parse('$base/rest/v1/$table').replace(
       queryParameters: query,
     );
   }
 
   Map<String, String> _headers(FamilyConfig config, {bool preferReturn = false}) {
-    final key = config.supabaseAnonKey!.trim();
+    final key = _cfg(config).effectiveSupabaseAnonKey;
     return {
       'apikey': key,
       'Authorization': 'Bearer $key',
@@ -39,7 +43,7 @@ class FamilySyncService {
   }
 
   Future<void> pushRecipe(FamilyConfig config, Recipe recipe) async {
-    if (!config.hasCloud) return;
+    if (!config.hasEffectiveCloud) return;
     final response = await _client.post(
       _rest(config, 'recipes', query: {'on_conflict': 'id'}),
       headers: _headers(config, preferReturn: true),
@@ -49,7 +53,7 @@ class FamilySyncService {
   }
 
   Future<void> deleteRecipe(FamilyConfig config, String recipeId) async {
-    if (!config.hasCloud) return;
+    if (!config.hasEffectiveCloud) return;
     final uri = _rest(
       config,
       'recipes',
@@ -63,7 +67,7 @@ class FamilySyncService {
   }
 
   Future<List<Recipe>> pullRecipes(FamilyConfig config) async {
-    if (!config.hasCloud) return [];
+    if (!config.hasEffectiveCloud) return [];
     final uri = _rest(
       config,
       'recipes',
@@ -84,7 +88,7 @@ class FamilySyncService {
     FamilyConfig config,
     ShoppingItem item,
   ) async {
-    if (!config.hasCloud) return;
+    if (!config.hasEffectiveCloud) return;
     final response = await _client.post(
       _rest(config, 'shopping_items', query: {'on_conflict': 'id'}),
       headers: _headers(config, preferReturn: true),
@@ -97,7 +101,7 @@ class FamilySyncService {
   }
 
   Future<void> deleteShoppingItem(FamilyConfig config, String itemId) async {
-    if (!config.hasCloud) return;
+    if (!config.hasEffectiveCloud) return;
     final uri = _rest(
       config,
       'shopping_items',
@@ -114,7 +118,7 @@ class FamilySyncService {
   }
 
   Future<List<ShoppingItem>> pullShoppingItems(FamilyConfig config) async {
-    if (!config.hasCloud) return [];
+    if (!config.hasEffectiveCloud) return [];
     final uri = _rest(
       config,
       'shopping_items',
@@ -138,7 +142,7 @@ class FamilySyncService {
     FamilyConfig config,
     List<Recipe> recipes,
   ) async {
-    if (!config.hasCloud || recipes.isEmpty) return;
+    if (!config.hasEffectiveCloud || recipes.isEmpty) return;
     final response = await _client.post(
       _rest(config, 'recipes', query: {'on_conflict': 'id'}),
       headers: _headers(config),
@@ -153,7 +157,7 @@ class FamilySyncService {
     FamilyConfig config,
     List<ShoppingItem> items,
   ) async {
-    if (!config.hasCloud || items.isEmpty) return;
+    if (!config.hasEffectiveCloud || items.isEmpty) return;
     final response = await _client.post(
       _rest(config, 'shopping_items', query: {'on_conflict': 'id'}),
       headers: _headers(config),
@@ -165,7 +169,7 @@ class FamilySyncService {
   }
 
   Future<String?> testConnection(FamilyConfig config) async {
-    if (!config.hasCloud) {
+    if (!config.hasEffectiveCloud) {
       return 'Cloud-Adresse oder Schlüssel fehlen.';
     }
     try {
@@ -175,7 +179,7 @@ class FamilySyncService {
         await client
             .from('recipes')
             .select('id')
-            .eq('family_code', config.familyCode)
+            .eq('family_code', _cfg(config).familyCode)
             .limit(1)
             .timeout(const Duration(seconds: 12));
         return null;
