@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/recipe.dart';
 import '../services/app_repository.dart';
+import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
 import 'cook_mode_screen.dart';
 import 'edit_recipe_screen.dart';
@@ -12,11 +13,13 @@ class RecipeDetailScreen extends StatefulWidget {
     super.key,
     required this.recipe,
     required this.repository,
+    required this.extractor,
     required this.onDelete,
   });
 
   final Recipe recipe;
   final AppRepository repository;
+  final RecipeExtractor extractor;
   final Future<void> Function() onDelete;
 
   @override
@@ -58,12 +61,14 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     );
   }
 
-  Future<void> _editRecipe() async {
+  Future<void> _editRecipe({bool autoStartAiRetry = false}) async {
     final updated = await Navigator.of(context).push<Recipe>(
       MaterialPageRoute(
         builder: (_) => EditRecipeScreen(
           recipe: _recipe,
           repository: widget.repository,
+          extractor: widget.extractor,
+          autoStartAiRetry: autoStartAiRetry,
         ),
       ),
     );
@@ -99,6 +104,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final recipe = _recipe;
+    final needsAi = recipe.needsAiEnrichment;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -155,6 +161,31 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                   ),
                 ],
               ),
+              if (needsAi) ...[
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentSoft,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppTheme.accent.withValues(alpha: 0.28),
+                    ),
+                  ),
+                  child: const Text(
+                    'Zubereitung noch unvollständig (oft weil die KI '
+                    'gerade kein Kontingent hatte). Du kannst die '
+                    'Auswertung jetzt nachholen.',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                FilledButton.icon(
+                  onPressed: () => _editRecipe(autoStartAiRetry: true),
+                  icon: const Icon(Icons.auto_awesome),
+                  label: const Text('KI-Auswertung nachholen'),
+                ),
+              ],
               const SizedBox(height: 14),
               FilledButton.tonalIcon(
                 onPressed: _editRecipe,

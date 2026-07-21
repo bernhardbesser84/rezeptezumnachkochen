@@ -220,6 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => RecipeDetailScreen(
           recipe: recipe,
           repository: widget.repository,
+          extractor: widget.extractor,
           onDelete: () async {
             await widget.repository.deleteRecipe(recipe.id);
             await _reload();

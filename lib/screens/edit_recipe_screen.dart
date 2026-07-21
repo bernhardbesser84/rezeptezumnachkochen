@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../models/recipe.dart';
 import '../services/app_repository.dart';
+import '../services/recipe_extractor.dart';
+import '../services/video_link_fetcher.dart';
+import '../theme/app_theme.dart';
 
 /// Alle Rezeptfelder nachträglich ändern und speichern.
 class EditRecipeScreen extends StatefulWidget {
@@ -10,10 +13,14 @@ class EditRecipeScreen extends StatefulWidget {
     super.key,
     required this.recipe,
     required this.repository,
+    required this.extractor,
+    this.autoStartAiRetry = false,
   });
 
   final Recipe recipe;
   final AppRepository repository;
+  final RecipeExtractor extractor;
+  final bool autoStartAiRetry;
 
   @override
   State<EditRecipeScreen> createState() => _EditRecipeScreenState();
@@ -28,6 +35,8 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
   late final TextEditingController _notes;
   late final TextEditingController _sourceUrl;
   bool _saving = false;
+  bool _retryingAi = false;
+  String? _aiStatus;
 
   @override
   void initState() {
@@ -42,6 +51,11 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
     _steps = TextEditingController(text: r.steps.join('\n'));
     _notes = TextEditingController(text: r.notes ?? '');
     _sourceUrl = TextEditingController(text: r.sourceUrl);
+    if (widget.autoStartAiRetry) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _retryAiEnrichment();
+      });
+    }
   }
 
   @override
@@ -62,18 +76,40 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
       .where((e) => e.isNotEmpty)
       .toList();
 
-  Future<void> _save() async {
+  Recipe _recipeFromForm() {
     final title = _title.text.trim();
-    if (title.isEmpty) {
+    final ingredients = _lines(_ingredients.text);
+    final steps = _lines(_steps.text);
+    final servings = _servings.text.trim();
+    final notes = _notes.text.trim();
+    final sourceUrl = _sourceUrl.text.trim();
+    final prepRaw = _prepTime.text.trim();
+    final prep = prepRaw.isEmpty ? null : int.tryParse(prepRaw);
+
+    return Recipe(
+      id: widget.recipe.id,
+      title: title.isEmpty ? widget.recipe.title : title,
+      ingredients: ingredients.isEmpty
+          ? ['Zutaten noch ergänzen']
+          : ingredients,
+      steps: steps.isEmpty ? ['Schritte noch ergänzen'] : steps,
+      sourceUrl: sourceUrl,
+      createdAt: widget.recipe.createdAt,
+      servings: servings.isEmpty ? null : servings,
+      prepTimeMinutes: prep,
+      notes: notes.isEmpty ? null : notes,
+    );
+  }
+
+  Future<void> _save({Recipe? recipe, String successMessage = 'Rezept gespeichert.'}) async {
+    final draft = recipe ?? _recipeFromForm();
+    if (draft.title.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Bitte einen Titel eingeben.')),
       );
       return;
     }
-
-    final ingredients = _lines(_ingredients.text);
-    final steps = _lines(_steps.text);
-    if (ingredients.isEmpty && steps.isEmpty) {
+    if (draft.ingredients.isEmpty && draft.steps.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Bitte mindestens Zutaten oder Schritte eintragen.'),
@@ -84,45 +120,144 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
 
     setState(() => _saving = true);
     try {
-      final servings = _servings.text.trim();
-      final notes = _notes.text.trim();
-      final sourceUrl = _sourceUrl.text.trim();
-      final prepRaw = _prepTime.text.trim();
-      final prep = prepRaw.isEmpty ? null : int.tryParse(prepRaw);
-
-      final updated = Recipe(
-        id: widget.recipe.id,
-        title: title,
-        ingredients: ingredients.isEmpty
-            ? ['Zutaten noch ergänzen']
-            : ingredients,
-        steps: steps.isEmpty ? ['Schritte noch ergänzen'] : steps,
-        sourceUrl: sourceUrl,
-        createdAt: widget.recipe.createdAt,
-        servings: servings.isEmpty ? null : servings,
-        prepTimeMinutes: prep,
-        notes: notes.isEmpty ? null : notes,
-      );
-
-      await widget.repository.saveRecipe(updated);
+      await widget.repository.saveRecipe(draft);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Rezept gespeichert.')),
+        SnackBar(content: Text(successMessage)),
       );
-      Navigator.pop(context, updated);
+      Navigator.pop(context, draft);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
+  Future<void> _retryAiEnrichment() async {
+    final url = _sourceUrl.text.trim().isNotEmpty
+        ? _sourceUrl.text.trim()
+        : widget.recipe.sourceUrl.trim();
+
+    if (url.isEmpty &&
+        _ingredients.text.trim().isEmpty &&
+        _notes.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Bitte zuerst einen Video-Link eintragen, '
+            'dann „KI-Auswertung nachholen“ tippen.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _retryingAi = true;
+      _aiStatus = 'KI wertet erneut aus…';
+    });
+
+    try {
+      final provider = await widget.repository.storage.getAiProvider();
+      final apiKey = await widget.repository.storage.getApiKey();
+      if (apiKey == null || apiKey.trim().isEmpty) {
+        throw Exception(
+          'Kein KI-Schlüssel gefunden. '
+          'Bitte unter Einstellungen prüfen.',
+        );
+      }
+
+      Uint8List? videoBytes;
+      String? videoMimeType;
+      String? videoFileName;
+      if (url.isNotEmpty) {
+        setState(() => _aiStatus = 'Video vom Link laden…');
+        try {
+          final fetched = await VideoLinkFetcher().fetchFromUrl(url);
+          videoBytes = fetched.bytes;
+          videoMimeType = fetched.mimeType;
+          videoFileName = fetched.fileName;
+          setState(() => _aiStatus = 'Video geladen — KI wertet aus…');
+        } catch (_) {
+          setState(
+            () => _aiStatus =
+                'Video nicht ladbar — KI nutzt Link/Text…',
+          );
+        }
+      }
+
+      final sourceText = [
+        if (url.isNotEmpty) url,
+        if (_title.text.trim().isNotEmpty) 'Titel: ${_title.text.trim()}',
+        if (_ingredients.text.trim().isNotEmpty)
+          'Bisherige Zutaten:\n${_ingredients.text.trim()}',
+        if (_notes.text.trim().isNotEmpty) _notes.text.trim(),
+      ].join('\n\n');
+
+      final result = await widget.extractor.extractRecipe(
+        sourceText: sourceText,
+        sourceUrl: url.isEmpty ? null : url,
+        apiKey: apiKey,
+        provider: provider,
+        useAi: true,
+        videoBytes: videoBytes,
+        videoMimeType: videoMimeType,
+        videoFileName: videoFileName,
+      );
+
+      if (result.notes?.contains('KI war gerade nicht nutzbar') == true) {
+        final reason = result.notes!
+            .split('\n')
+            .first
+            .replaceFirst('KI war gerade nicht nutzbar (', '')
+            .replaceFirst(').', '');
+        throw Exception(reason);
+      }
+
+      final enriched = result.copyWith(
+        id: widget.recipe.id,
+        createdAt: widget.recipe.createdAt,
+        sourceUrl: url.isNotEmpty ? url : result.sourceUrl,
+      );
+
+      setState(() {
+        _title.text = enriched.title;
+        _servings.text = enriched.servings ?? '';
+        _prepTime.text = enriched.prepTimeMinutes?.toString() ?? '';
+        _ingredients.text = enriched.ingredients.join('\n');
+        _steps.text = enriched.steps.join('\n');
+        _notes.text = enriched.notes ?? '';
+        if (enriched.sourceUrl.isNotEmpty) {
+          _sourceUrl.text = enriched.sourceUrl;
+        }
+        _aiStatus = 'KI-Auswertung fertig — speichern…';
+      });
+
+      await _save(
+        recipe: enriched,
+        successMessage: 'KI-Auswertung nachgeholt und gespeichert.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final message = e.toString().replaceFirst('Exception: ', '');
+      setState(() => _aiStatus = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nachholen fehlgeschlagen: $message')),
+      );
+    } finally {
+      if (mounted) setState(() => _retryingAi = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final busy = _saving || _retryingAi;
+    final showRetryHint = widget.recipe.needsAiEnrichment;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Rezept bearbeiten'),
         actions: [
           TextButton(
-            onPressed: _saving ? null : _save,
+            onPressed: busy ? null : () => _save(),
             child: const Text('Speichern'),
           ),
         ],
@@ -133,6 +268,45 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
           const Text(
             'Hier kannst du alles ändern: Name, Zutaten, Schritte und mehr.',
           ),
+          if (showRetryHint) ...[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTheme.accentSoft,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: AppTheme.accent.withValues(alpha: 0.3),
+                ),
+              ),
+              child: const Text(
+                'Die Zubereitung fehlt noch oder die KI war beim Anlegen '
+                'nicht erreichbar (z. B. Kontingent leer). '
+                'Du kannst die Auswertung jetzt nachholen.',
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          FilledButton.tonalIcon(
+            onPressed: busy ? null : _retryAiEnrichment,
+            icon: _retryingAi
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.auto_awesome),
+            label: Text(
+              _retryingAi
+                  ? 'KI wertet aus…'
+                  : 'KI-Auswertung nachholen',
+            ),
+          ),
+          if (_aiStatus != null) ...[
+            const SizedBox(height: 8),
+            Text(_aiStatus!),
+          ],
           const SizedBox(height: 16),
           TextField(
             controller: _title,
@@ -205,7 +379,7 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
           ),
           const SizedBox(height: 20),
           FilledButton.icon(
-            onPressed: _saving ? null : _save,
+            onPressed: busy ? null : () => _save(),
             icon: _saving
                 ? const SizedBox(
                     width: 18,
