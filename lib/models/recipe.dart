@@ -94,6 +94,7 @@ class Recipe {
     String? servings,
     int? prepTimeMinutes,
     String? notes,
+    bool clearNotes = false,
   }) {
     return Recipe(
       id: id ?? this.id,
@@ -104,7 +105,23 @@ class Recipe {
       createdAt: createdAt ?? this.createdAt,
       servings: servings ?? this.servings,
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
-      notes: notes ?? this.notes,
+      notes: clearNotes ? null : (notes ?? this.notes),
     );
+  }
+
+  /// True, wenn die KI-Auswertung fehlgeschlagen/fehlt und nachgeholt werden kann.
+  bool get needsAiEnrichment {
+    final notesLower = (notes ?? '').toLowerCase();
+    if (notesLower.contains('ki war gerade nicht nutzbar')) return true;
+    if (notesLower.contains('erstellt ohne ki')) return true;
+    if (notesLower.contains('einfache auswertung ohne ki')) return true;
+
+    final stepText = steps.join(' ').toLowerCase();
+    if (stepText.contains('öffne das originalvideo')) return true;
+    if (stepText.contains('schritte manuell nach')) return true;
+    if (stepText.contains('schritte noch ergänzen')) return true;
+    if (stepText.contains('bitte video anhängen')) return true;
+    if (stepText.contains('wie im video vorbereitet')) return true;
+    return false;
   }
 }

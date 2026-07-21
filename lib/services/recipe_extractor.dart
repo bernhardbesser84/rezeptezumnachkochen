@@ -765,11 +765,14 @@ class RecipeExtractor {
     return _recipeFromAiJson(text, sourceUrl);
   }
 
-  /// Modelle der Reihe nach — bei 503/Überlastung das nächste versuchen.
+  /// Modelle der Reihe nach — bei 429/503/404 das nächste versuchen.
+  /// 1.5 zuerst: oft noch Free-Kontingent, wenn neuere Modelle bei 0 liegen.
   static const _geminiModels = <String>[
-    'gemini-3.5-flash',
-    'gemini-2.5-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
     'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
   ];
 
   /// Gemini-JSON-Config: festes Schema + wenig „Mitdenken“,
