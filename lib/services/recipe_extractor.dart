@@ -20,6 +20,17 @@ class PagePreview {
   final String description;
 }
 
+/// Ein Rezept-Foto für die KI-Auswertung.
+class RecipeImageInput {
+  const RecipeImageInput({
+    required this.bytes,
+    required this.mimeType,
+  });
+
+  final Uint8List bytes;
+  final String mimeType;
+}
+
 class RecipeExtractor {
   RecipeExtractor({
     http.Client? client,
@@ -345,49 +356,83 @@ class RecipeExtractor {
     return host.contains('youtube.com') || host == 'youtu.be';
   }
 
-  /// Liest ein abfotografiertes Papier-Rezept mit KI aus (Bild → Rezept).
+  /// Liest ein oder mehrere Rezept-Fotos mit KI aus (Bild → Rezept).
+  ///
+  /// Geeignet für Papier-Rezepte und Bildserien (z. B. Schritt-für-Schritt
+  /// mit Text im Bild: Zutaten + Zubereitung).
   Future<Recipe> extractRecipeFromImage({
     required Uint8List imageBytes,
     required String mimeType,
     required String apiKey,
     AiProvider provider = AiProvider.gemini,
+  }) {
+    return extractRecipeFromImages(
+      images: [RecipeImageInput(bytes: imageBytes, mimeType: mimeType)],
+      apiKey: apiKey,
+      provider: provider,
+    );
+  }
+
+  Future<Recipe> extractRecipeFromImages({
+    required List<RecipeImageInput> images,
+    required String apiKey,
+    AiProvider provider = AiProvider.gemini,
   }) async {
-    final b64 = base64Encode(imageBytes);
-    final prompt =
-        'Lies dieses Foto eines handgeschriebenen oder gedruckten Rezepts. '
-        'Erstelle daraus ein nachkochbares Rezept. $_systemPrompt';
+    if (images.isEmpty) {
+      throw Exception('Bitte mindestens ein Foto hinzufügen.');
+    }
+
+    final prompt = images.length == 1
+        ? 'Lies dieses Foto eines Rezepts (Papier, Screenshot oder '
+            'Social-Media-Bild mit Text). '
+            'Erstelle daraus ein nachkochbares Rezept. $_systemPrompt'
+        : 'Hier sind ${images.length} Fotos/Screenshots desselben Rezepts '
+            '(oft Schritt für Schritt, mit Text im Bild). '
+            'Lies ALLE Bilder der Reihe nach. '
+            'Sammle Zutaten und Zubereitungsschritte aus Text und Bild. '
+            'Reihenfolge der Bilder = Reihenfolge der Schritte, '
+            'wenn die Bilder klar aufeinander folgen. '
+            'Erstelle EIN vollständiges Rezept. $_systemPrompt';
 
     switch (provider) {
       case AiProvider.openai:
-        return _extractImageWithOpenAi(
+        return _extractImagesWithOpenAi(
           prompt: prompt,
-          mimeType: mimeType,
-          b64: b64,
+          images: images,
           apiKey: apiKey,
         );
       case AiProvider.gemini:
-        return _extractImageWithGemini(
+        return _extractImagesWithGemini(
           prompt: prompt,
-          mimeType: mimeType,
-          b64: b64,
+          images: images,
           apiKey: apiKey,
         );
       case AiProvider.claude:
-        return _extractImageWithClaude(
+        return _extractImagesWithClaude(
           prompt: prompt,
-          mimeType: mimeType,
-          b64: b64,
+          images: images,
           apiKey: apiKey,
         );
     }
   }
 
-  Future<Recipe> _extractImageWithOpenAi({
+  Future<Recipe> _extractImagesWithOpenAi({
     required String prompt,
-    required String mimeType,
-    required String b64,
+    required List<RecipeImageInput> images,
     required String apiKey,
   }) async {
+    final content = <Map<String, dynamic>>[
+      {'type': 'text', 'text': prompt},
+      for (final image in images)
+        {
+          'type': 'image_url',
+          'image_url': {
+            'url':
+                'data:${image.mimeType};base64,${base64Encode(image.bytes)}',
+          },
+        },
+    ];
+
     final response = await _client
         .post(
           Uri.parse('https://api.openai.com/v1/chat/completions'),
@@ -400,22 +445,11 @@ class RecipeExtractor {
             'temperature': 0.2,
             'response_format': {'type': 'json_object'},
             'messages': [
-              {
-                'role': 'user',
-                'content': [
-                  {'type': 'text', 'text': prompt},
-                  {
-                    'type': 'image_url',
-                    'image_url': {
-                      'url': 'data:$mimeType;base64,$b64',
-                    },
-                  },
-                ],
-              },
+              {'role': 'user', 'content': content},
             ],
           }),
         )
-        .timeout(const Duration(seconds: 60));
+        .timeout(Duration(seconds: 30 + (20 * images.length)));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
@@ -424,47 +458,61 @@ class RecipeExtractor {
     }
 
     final body = jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
-    final content =
+    final text =
         (body['choices'] as List).first['message']['content'] as String;
-    return _recipeFromAiJson(content, '');
+    return _recipeFromAiJson(text, '');
   }
 
-  Future<Recipe> _extractImageWithGemini({
+  Future<Recipe> _extractImagesWithGemini({
     required String prompt,
-    required String mimeType,
-    required String b64,
+    required List<RecipeImageInput> images,
     required String apiKey,
   }) async {
+    final parts = <Map<String, dynamic>>[
+      {'text': prompt},
+      for (final image in images)
+        {
+          'inline_data': {
+            'mime_type': image.mimeType,
+            'data': base64Encode(image.bytes),
+          },
+        },
+    ];
+
     final body = await _postGeminiGenerateContent(
       apiKey: apiKey,
       payload: {
         'contents': [
           {
             'role': 'user',
-            'parts': [
-              {'text': prompt},
-              {
-                'inline_data': {
-                  'mime_type': mimeType,
-                  'data': b64,
-                },
-              },
-            ],
+            'parts': parts,
           },
         ],
         'generationConfig': _geminiJsonGenerationConfig(),
       },
-      timeout: const Duration(seconds: 60),
+      timeout: Duration(seconds: 30 + (20 * images.length)),
     );
     return _recipeFromAiJson(_geminiAnswerText(body), '');
   }
 
-  Future<Recipe> _extractImageWithClaude({
+  Future<Recipe> _extractImagesWithClaude({
     required String prompt,
-    required String mimeType,
-    required String b64,
+    required List<RecipeImageInput> images,
     required String apiKey,
   }) async {
+    final content = <Map<String, dynamic>>[
+      for (final image in images)
+        {
+          'type': 'image',
+          'source': {
+            'type': 'base64',
+            'media_type': image.mimeType,
+            'data': base64Encode(image.bytes),
+          },
+        },
+      {'type': 'text', 'text': prompt},
+    ];
+
     final response = await _client
         .post(
           Uri.parse('https://api.anthropic.com/v1/messages'),
@@ -478,24 +526,11 @@ class RecipeExtractor {
             'max_tokens': 2048,
             'temperature': 0.2,
             'messages': [
-              {
-                'role': 'user',
-                'content': [
-                  {
-                    'type': 'image',
-                    'source': {
-                      'type': 'base64',
-                      'media_type': mimeType,
-                      'data': b64,
-                    },
-                  },
-                  {'type': 'text', 'text': prompt},
-                ],
-              },
+              {'role': 'user', 'content': content},
             ],
           }),
         )
-        .timeout(const Duration(seconds: 60));
+        .timeout(Duration(seconds: 30 + (20 * images.length)));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
@@ -504,11 +539,13 @@ class RecipeExtractor {
     }
 
     final body = jsonDecode(_utf8Body(response)) as Map<String, dynamic>;
-    final content = body['content'] as List?;
-    if (content == null || content.isEmpty) {
-      throw Exception('Claude hat keine Antwort geliefert. Bitte erneut versuchen.');
+    final blocks = body['content'] as List?;
+    if (blocks == null || blocks.isEmpty) {
+      throw Exception(
+        'Claude hat keine Antwort geliefert. Bitte erneut versuchen.',
+      );
     }
-    final text = content
+    final text = blocks
         .whereType<Map>()
         .map((part) => part['text']?.toString() ?? '')
         .join()
