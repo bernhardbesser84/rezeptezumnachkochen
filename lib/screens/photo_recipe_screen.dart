@@ -1,15 +1,13 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/app_repository.dart';
 import '../services/recipe_extractor.dart';
 
-/// Papier-Rezept abfotografieren und daraus ein Rezept machen.
+/// Rezept aus einem oder mehreren Fotos/Screenshots erstellen.
 ///
-/// - Mit KI-Schlüssel: Text wird automatisch ausgelesen.
-/// - Ohne Schlüssel: Foto ansehen und Text selbst eintippen (immer möglich).
+/// - Mit KI-Schlüssel: Text in den Bildern wird automatisch ausgelesen.
+/// - Ohne Schlüssel: Fotos ansehen und Text selbst eintippen (immer möglich).
 class PhotoRecipeScreen extends StatefulWidget {
   const PhotoRecipeScreen({
     super.key,
@@ -25,13 +23,14 @@ class PhotoRecipeScreen extends StatefulWidget {
 }
 
 class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
+  static const _maxImages = 12;
+
   final _picker = ImagePicker();
   final _title = TextEditingController();
   final _ingredients = TextEditingController();
   final _steps = TextEditingController();
 
-  Uint8List? _imageBytes;
-  String _mimeType = 'image/jpeg';
+  final List<RecipeImageInput> _images = [];
   bool _alsoShopping = true;
   bool _busy = false;
   String? _status;
@@ -58,34 +57,98 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
     super.dispose();
   }
 
-  Future<void> _pick(ImageSource source) async {
+  String _mimeFor(XFile file) {
+    final mime = file.mimeType;
+    if (mime != null && mime.startsWith('image/')) return mime;
+    final path = file.path.toLowerCase();
+    if (path.endsWith('.png')) return 'image/png';
+    if (path.endsWith('.webp')) return 'image/webp';
+    return 'image/jpeg';
+  }
+
+  Future<void> _addCameraPhoto() async {
     setState(() {
       _error = null;
       _status = null;
     });
+    if (_images.length >= _maxImages) {
+      setState(() {
+        _error = 'Maximal $_maxImages Bilder. Bitte erst eines entfernen.';
+      });
+      return;
+    }
     try {
       final file = await _picker.pickImage(
-        source: source,
+        source: ImageSource.camera,
         imageQuality: 85,
-        maxWidth: 2000,
+        maxWidth: 1600,
       );
       if (file == null) return;
       final bytes = await file.readAsBytes();
-      final mime = file.mimeType ??
-          (file.path.toLowerCase().endsWith('.png')
-              ? 'image/png'
-              : 'image/jpeg');
       setState(() {
-        _imageBytes = bytes;
-        _mimeType = mime;
+        _images.add(RecipeImageInput(bytes: bytes, mimeType: _mimeFor(file)));
       });
-    } catch (e) {
+    } catch (_) {
       setState(() {
         _error =
             'Foto konnte nicht geladen werden. Bitte Kamerazugriff erlauben '
-            'oder ein Bild aus der Galerie wählen.';
+            'oder Bilder aus der Galerie wählen.';
       });
     }
+  }
+
+  Future<void> _addFromGallery() async {
+    setState(() {
+      _error = null;
+      _status = null;
+    });
+    final remaining = _maxImages - _images.length;
+    if (remaining <= 0) {
+      setState(() {
+        _error = 'Maximal $_maxImages Bilder. Bitte erst eines entfernen.';
+      });
+      return;
+    }
+    try {
+      final files = await _picker.pickMultiImage(
+        imageQuality: 85,
+        maxWidth: 1600,
+        limit: remaining,
+      );
+      if (files.isEmpty) return;
+      final added = <RecipeImageInput>[];
+      for (final file in files.take(remaining)) {
+        final bytes = await file.readAsBytes();
+        added.add(RecipeImageInput(bytes: bytes, mimeType: _mimeFor(file)));
+      }
+      setState(() => _images.addAll(added));
+    } catch (_) {
+      // Fallback: einzelnes Bild, falls Multi auf dem Gerät nicht geht.
+      try {
+        final file = await _picker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 85,
+          maxWidth: 1600,
+        );
+        if (file == null) return;
+        final bytes = await file.readAsBytes();
+        setState(() {
+          _images.add(
+            RecipeImageInput(bytes: bytes, mimeType: _mimeFor(file)),
+          );
+        });
+      } catch (_) {
+        setState(() {
+          _error =
+              'Bilder konnten nicht geladen werden. Bitte Galerie-Zugriff '
+              'erlauben und erneut versuchen.';
+        });
+      }
+    }
+  }
+
+  void _removeImage(int index) {
+    setState(() => _images.removeAt(index));
   }
 
   List<String> _lines(String value) => value
@@ -95,8 +158,8 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
       .toList();
 
   Future<void> _autoRead() async {
-    if (_imageBytes == null) {
-      setState(() => _error = 'Bitte zuerst ein Foto aufnehmen oder wählen.');
+    if (_images.isEmpty) {
+      setState(() => _error = 'Bitte zuerst Fotos aufnehmen oder wählen.');
       return;
     }
 
@@ -114,14 +177,15 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
     setState(() {
       _busy = true;
       _error = null;
-      _status = 'Foto wird ausgelesen…';
+      _status = _images.length == 1
+          ? 'Foto wird ausgelesen…'
+          : '${_images.length} Bilder werden ausgelesen…';
     });
 
     try {
       final provider = await widget.repository.storage.getAiProvider();
-      final recipe = await widget.extractor.extractRecipeFromImage(
-        imageBytes: _imageBytes!,
-        mimeType: _mimeType,
+      final recipe = await widget.extractor.extractRecipeFromImages(
+        images: List<RecipeImageInput>.from(_images),
         apiKey: apiKey.trim(),
         provider: provider,
       );
@@ -159,11 +223,13 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
     try {
       final recipe = widget.extractor.buildManualRecipe(
         title: _title.text.trim().isEmpty
-            ? 'Abfotografiertes Rezept'
+            ? 'Rezept aus Fotos'
             : _title.text,
         ingredients: _lines(_ingredients.text),
         steps: _lines(_steps.text),
-        notes: 'Aus Foto erfasst.',
+        notes: _images.length <= 1
+            ? 'Aus Foto erfasst.'
+            : 'Aus ${_images.length} Fotos/Screenshots erfasst.',
       );
       await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {
@@ -185,18 +251,19 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
         children: [
           Text(
             _hasApiKey
-                ? 'Foto vom Papier-Rezept machen. Danach kannst du es '
-                    'automatisch auslesen lassen oder selbst tippen.'
-                : 'Foto vom Papier-Rezept machen und den Text selbst eintippen. '
+                ? 'Ein Foto oder mehrere Screenshots/Bilder wählen '
+                    '(z. B. Schritt-für-Schritt mit Text im Bild). '
+                    'Danach automatisch auslesen oder selbst tippen.'
+                : 'Fotos wählen und den Text selbst eintippen. '
                     'Mit KI-Schlüssel (z. B. Gemini) unter Einstellungen geht '
-                    'auch automatisches Auslesen.',
+                    'auch automatisches Auslesen mehrerer Bilder.',
           ),
           const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
                 child: FilledButton.tonalIcon(
-                  onPressed: _busy ? null : () => _pick(ImageSource.camera),
+                  onPressed: _busy ? null : _addCameraPhoto,
                   icon: const Icon(Icons.photo_camera),
                   label: const Text('Kamera'),
                 ),
@@ -204,29 +271,83 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: _busy ? null : () => _pick(ImageSource.gallery),
+                  onPressed: _busy ? null : _addFromGallery,
                   icon: const Icon(Icons.photo_library),
                   label: const Text('Galerie'),
                 ),
               ),
             ],
           ),
-          if (_imageBytes != null) ...[
+          if (_images.isNotEmpty) ...[
             const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.memory(
-                _imageBytes!,
-                height: 220,
-                width: double.infinity,
-                fit: BoxFit.cover,
+            Text(
+              '${_images.length} Bild${_images.length == 1 ? '' : 'er'} '
+              '(Reihenfolge = Schritte)',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 110,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _images.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final image = _images[index];
+                  return Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.memory(
+                          image.bytes,
+                          width: 110,
+                          height: 110,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      Positioned(
+                        left: 6,
+                        top: 6,
+                        child: CircleAvatar(
+                          radius: 12,
+                          backgroundColor: Colors.black54,
+                          child: Text(
+                            '${index + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: IconButton(
+                          tooltip: 'Entfernen',
+                          onPressed: _busy ? null : () => _removeImage(index),
+                          icon: const Icon(Icons.cancel, color: Colors.white),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black45,
+                            padding: const EdgeInsets.all(4),
+                            minimumSize: const Size(28, 28),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
             const SizedBox(height: 10),
             FilledButton.icon(
               onPressed: _busy ? null : _autoRead,
               icon: const Icon(Icons.document_scanner),
-              label: const Text('Automatisch auslesen'),
+              label: Text(
+                _images.length == 1
+                    ? 'Automatisch auslesen'
+                    : 'Alle ${_images.length} Bilder auslesen',
+              ),
             ),
           ],
           if (_status != null) ...[
@@ -247,7 +368,7 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
               labelText: 'Titel',
-              hintText: 'z. B. Omas Apfelkuchen',
+              hintText: 'z. B. Wassermelonen-Feta-Salat',
             ),
           ),
           const SizedBox(height: 12),
@@ -267,7 +388,7 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
             controller: _steps,
             enabled: !_busy,
             minLines: 4,
-            maxLines: 10,
+            maxLines: 12,
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
               labelText: 'Schritte (eine Zeile pro Schritt)',

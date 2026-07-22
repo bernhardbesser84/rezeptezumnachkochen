@@ -577,7 +577,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                 child: OutlinedButton.icon(
                   onPressed: _loading ? null : _openPhoto,
                   icon: const Icon(Icons.photo_camera),
-                  label: const Text('Fotografieren'),
+                  label: const Text('Fotos / Screenshots'),
                 ),
               ),
               const SizedBox(width: 10),
