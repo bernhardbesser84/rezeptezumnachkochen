@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../config/gemini_defaults.dart';
+import '../config/google_defaults.dart';
 import '../models/ai_provider.dart';
 import '../models/family_config.dart';
 import '../models/recipe.dart';
@@ -235,17 +236,25 @@ class RecipeStorage {
 
   Future<String?> getGoogleWebClientId() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_googleWebClientIdKey);
+    final stored = prefs.getString(_googleWebClientIdKey)?.trim();
+    if (stored != null && stored.isNotEmpty) return stored;
+    if (GoogleDefaults.hasBuiltInClientId) {
+      return GoogleDefaults.webClientId;
+    }
+    return null;
   }
 
   Future<void> setGoogleWebClientId(String? value) async {
     final prefs = await SharedPreferences.getInstance();
     final trimmed = value?.trim() ?? '';
-    if (trimmed.isEmpty) {
+    // Eingebaute ID nicht unnötig lokal speichern.
+    if (trimmed.isEmpty ||
+        (GoogleDefaults.hasBuiltInClientId &&
+            trimmed == GoogleDefaults.webClientId.trim())) {
       await prefs.remove(_googleWebClientIdKey);
-    } else {
-      await prefs.setString(_googleWebClientIdKey, trimmed);
+      return;
     }
+    await prefs.setString(_googleWebClientIdKey, trimmed);
   }
 
   Future<bool> isGoogleBackupEnabled() async {

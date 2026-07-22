@@ -35,6 +35,10 @@ if [ -n "${GEMINI_API_KEY:-}" ]; then
   DART_DEFINES+=(--dart-define="GEMINI_API_KEY=$GEMINI_API_KEY")
   echo "Gemini-API-Key wird aus Vercel-Env eingebaut."
 fi
+if [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ]; then
+  DART_DEFINES+=(--dart-define="GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID")
+  echo "Google-Client-ID wird aus Vercel-Env eingebaut."
+fi
 
 flutter build web --release --base-href "/" "${DART_DEFINES[@]}"
 
