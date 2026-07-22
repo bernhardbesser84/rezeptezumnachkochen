@@ -57,8 +57,8 @@ class GoogleBackupService {
     final clientId = await storage.getGoogleWebClientId();
     if (clientId == null || clientId.trim().isEmpty) {
       throw Exception(
-        'Bitte zuerst die Google-Client-ID (Web) in den Einstellungen '
-        'eintragen. Ohne diese Nummer geht die Google-Anmeldung nicht.',
+        'Google-Client-ID fehlt. Bitte unter Google-Backup prüfen '
+        'oder die App aktualisieren.',
       );
     }
     _signIn ??= _buildSignIn(clientId.trim());

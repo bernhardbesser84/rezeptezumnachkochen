@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/google_defaults.dart';
 import '../services/app_repository.dart';
 import '../services/google_backup_service.dart';
 import '../theme/app_theme.dart';
@@ -27,10 +28,13 @@ class _GoogleBackupScreenState extends State<GoogleBackupScreen> {
 
   bool _loading = true;
   bool _busy = false;
+  bool _showAdvancedClientId = false;
   String? _email;
   DateTime? _lastBackup;
   String? _info;
   String? _error;
+
+  bool get _builtInClientId => GoogleDefaults.hasBuiltInClientId;
 
   @override
   void initState() {
@@ -44,7 +48,12 @@ class _GoogleBackupScreenState extends State<GoogleBackupScreen> {
     final email = await storage.getGoogleBackupEmail();
     final last = await storage.getGoogleBackupLastAt();
     _clientIdController.text = clientId ?? '';
-    await widget.backup.trySilentSignIn();
+    // Ohne eingebaute ID: Felder zeigen. Mit eingebauter ID: nur wenn Override.
+    final hasOverride = _builtInClientId &&
+        (clientId?.trim().isNotEmpty ?? false) &&
+        clientId!.trim() != GoogleDefaults.webClientId.trim();
+    _showAdvancedClientId = !_builtInClientId || hasOverride;
+    await widget.backup.prepareClientId();
     if (!mounted) return;
     setState(() {
       _email = widget.backup.email ?? email;
@@ -79,6 +88,7 @@ class _GoogleBackupScreenState extends State<GoogleBackupScreen> {
       _clientIdController.selection = TextSelection.collapsed(
         offset: result.text!.length,
       );
+      _showAdvancedClientId = true;
     });
   }
 
@@ -102,7 +112,17 @@ class _GoogleBackupScreenState extends State<GoogleBackupScreen> {
   }
 
   Future<void> _signIn() async {
-    await _saveClientId();
+    // Eingebaute ID sicher aktiv; sonst ggf. eingegebene ID speichern.
+    if (_builtInClientId &&
+        (_clientIdController.text.trim().isEmpty ||
+            _clientIdController.text.trim() ==
+                GoogleDefaults.webClientId.trim())) {
+      await widget.repository.storage.setGoogleWebClientId(null);
+    } else {
+      await _saveClientId();
+    }
+    await widget.backup.prepareClientId();
+
     await _run(() async {
       final account = await widget.backup.signIn();
       setState(() => _email = account.email);
@@ -264,77 +284,140 @@ class _GoogleBackupScreenState extends State<GoogleBackupScreen> {
                       color: AppTheme.seed.withValues(alpha: 0.14),
                     ),
                   ),
-                  child: const Text(
-                    'Melde dich mit Google an. Dann sichert die App nach jedem '
-                    'neuen Rezept automatisch Rezepte, Einkaufsliste und '
-                    'Einstellungen (auch KI-Schlüssel). '
-                    'Wenn du die App löschst, kannst du alles wiederherstellen.',
+                  child: Text(
+                    _builtInClientId
+                        ? 'Melde dich mit Google an. Die App-Anmeldung ist '
+                            'schon eingerichtet — du musst keine Client-ID '
+                            'mehr eintragen. Nach dem Login sichert die App '
+                            'Rezepte, Einkaufsliste und Einstellungen.'
+                        : 'Melde dich mit Google an. Dann sichert die App '
+                            'nach jedem neuen Rezept automatisch Rezepte, '
+                            'Einkaufsliste und Einstellungen (auch KI-Schlüssel). '
+                            'Wenn du die App löschst, kannst du alles '
+                            'wiederherstellen.',
                   ),
                 ),
-                const SizedBox(height: 22),
-                Text(
-                  '1. Einmalig: Google-Client-ID',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'In der Google Cloud Console ein „OAuth-Client-ID“ vom Typ '
-                  '„Webanwendung“ anlegen. Als JavaScript-Ursprung deine '
-                  'App-Adresse eintragen (z. B. https://…vercel.app). '
-                  'Außerdem die Google Drive API aktivieren.',
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _openCloudConsole,
-                      icon: const Icon(Icons.key_outlined),
-                      label: const Text('Client-ID holen'),
+                if (_builtInClientId) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentSoft,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: AppTheme.accent.withValues(alpha: 0.3),
+                      ),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _openDriveApi,
-                      icon: const Icon(Icons.cloud_outlined),
-                      label: const Text('Drive API'),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.verified_user_outlined,
+                                color: AppTheme.accent),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Google-Anmeldung vorbereitet (eingebaut)',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Client-ID: ✓ in der App hinterlegt. '
+                          'Nur noch „Mit Google anmelden“ tippen.',
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _clientIdController,
-                  focusNode: _clientIdFocus,
-                  enabled: !_busy,
-                  keyboardType: TextInputType.visiblePassword,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'Google-Client-ID (Web)',
-                    hintText: '….apps.googleusercontent.com',
                   ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton.tonalIcon(
-                        onPressed: _busy ? null : _pasteClientId,
-                        icon: const Icon(Icons.content_paste),
-                        label: const Text('Einfügen'),
-                      ),
+                  TextButton(
+                    onPressed: () => setState(
+                      () => _showAdvancedClientId = !_showAdvancedClientId,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _busy ? null : _saveClientId,
-                        child: const Text('ID speichern'),
-                      ),
+                    child: Text(
+                      _showAdvancedClientId
+                          ? 'Technische Details ausblenden'
+                          : 'Technische Details (für Profis)',
                     ),
-                  ],
-                ),
+                  ),
+                ],
+                if (!_builtInClientId || _showAdvancedClientId) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _builtInClientId
+                        ? 'Eigene Client-ID (optional)'
+                        : '1. Einmalig: Google-Client-ID',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _builtInClientId
+                        ? 'Nur nötig, wenn du eine andere Google-Cloud-'
+                            'App nutzen willst. Sonst leer lassen.'
+                        : 'In der Google Cloud Console ein „OAuth-Client-ID“ '
+                            'vom Typ „Webanwendung“ anlegen. Als JavaScript-'
+                            'Ursprung deine App-Adresse eintragen '
+                            '(z. B. https://…vercel.app). Außerdem die '
+                            'Google Drive API aktivieren.',
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _busy ? null : _openCloudConsole,
+                        icon: const Icon(Icons.key_outlined),
+                        label: const Text('Client-ID holen'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _busy ? null : _openDriveApi,
+                        icon: const Icon(Icons.cloud_outlined),
+                        label: const Text('Drive API'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _clientIdController,
+                    focusNode: _clientIdFocus,
+                    enabled: !_busy,
+                    keyboardType: TextInputType.visiblePassword,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration: const InputDecoration(
+                      labelText: 'Google-Client-ID (Web)',
+                      hintText: '….apps.googleusercontent.com',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.tonalIcon(
+                          onPressed: _busy ? null : _pasteClientId,
+                          icon: const Icon(Icons.content_paste),
+                          label: const Text('Einfügen'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _busy ? null : _saveClientId,
+                          child: const Text('ID speichern'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 28),
                 Text(
-                  '2. Anmelden & sichern',
+                  _builtInClientId
+                      ? 'Anmelden & sichern'
+                      : '2. Anmelden & sichern',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 8),
