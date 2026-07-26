@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/family_config.dart';
 import '../models/family_config_cloud.dart';
+import '../models/meal_plan_entry.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 
@@ -166,6 +167,75 @@ class FamilySyncService {
       ),
     );
     _ensureOk(response, 'Einkaufsliste konnte nicht synchronisiert werden.');
+  }
+
+  Future<void> pushMealPlanEntry(
+    FamilyConfig config,
+    MealPlanEntry entry,
+  ) async {
+    if (!config.hasEffectiveCloud) return;
+    final response = await _client.post(
+      _rest(config, 'meal_plan_entries', query: {'on_conflict': 'id'}),
+      headers: _headers(config, preferReturn: true),
+      body: jsonEncode(entry.toCloud(familyCode: config.familyCode)),
+    );
+    _ensureOk(
+      response,
+      'Wochenplan konnte nicht in die Cloud gespeichert werden.',
+    );
+  }
+
+  Future<void> deleteMealPlanEntry(FamilyConfig config, String entryId) async {
+    if (!config.hasEffectiveCloud) return;
+    final uri = _rest(
+      config,
+      'meal_plan_entries',
+      query: {
+        'id': 'eq.$entryId',
+        'family_code': 'eq.${config.familyCode}',
+      },
+    );
+    final response = await _client.delete(uri, headers: _headers(config));
+    _ensureOk(
+      response,
+      'Wochenplan-Eintrag konnte in der Cloud nicht gelöscht werden.',
+    );
+  }
+
+  Future<List<MealPlanEntry>> pullMealPlanEntries(FamilyConfig config) async {
+    if (!config.hasEffectiveCloud) return [];
+    final uri = _rest(
+      config,
+      'meal_plan_entries',
+      query: {
+        'family_code': 'eq.${config.familyCode}',
+        'order': 'date.asc',
+      },
+    );
+    final response = await _client.get(uri, headers: _headers(config));
+    _ensureOk(
+      response,
+      'Wochenplan konnte nicht aus der Cloud geladen werden.',
+    );
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list
+        .map((e) => MealPlanEntry.fromCloud(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> pushAllMealPlanEntries(
+    FamilyConfig config,
+    List<MealPlanEntry> entries,
+  ) async {
+    if (!config.hasEffectiveCloud || entries.isEmpty) return;
+    final response = await _client.post(
+      _rest(config, 'meal_plan_entries', query: {'on_conflict': 'id'}),
+      headers: _headers(config),
+      body: jsonEncode(
+        entries.map((e) => e.toCloud(familyCode: config.familyCode)).toList(),
+      ),
+    );
+    _ensureOk(response, 'Wochenplan konnte nicht synchronisiert werden.');
   }
 
   Future<String?> testConnection(FamilyConfig config) async {

@@ -2,10 +2,11 @@ import 'dart:convert';
 
 import '../models/ai_provider.dart';
 import '../models/family_config.dart';
+import '../models/meal_plan_entry.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 
-/// Komplettes App-Backup (Rezepte + Einkauf + Einstellungen).
+/// Komplettes App-Backup (Rezepte + Einkauf + Wochenplan + Einstellungen).
 class AppBackupPayload {
   AppBackupPayload({
     required this.savedAt,
@@ -14,14 +15,16 @@ class AppBackupPayload {
     required this.aiProvider,
     required this.apiKeys,
     required this.demoSeeded,
+    this.mealPlanEntries = const [],
     this.familyConfig,
-    this.version = 1,
+    this.version = 2,
   });
 
   final int version;
   final DateTime savedAt;
   final List<Recipe> recipes;
   final List<ShoppingItem> shoppingItems;
+  final List<MealPlanEntry> mealPlanEntries;
   final FamilyConfig? familyConfig;
   final AiProvider aiProvider;
   final Map<String, String> apiKeys;
@@ -32,6 +35,7 @@ class AppBackupPayload {
         'savedAt': savedAt.toIso8601String(),
         'recipes': recipes.map((r) => r.toJson()).toList(),
         'shoppingItems': shoppingItems.map((e) => e.toJson()).toList(),
+        'mealPlanEntries': mealPlanEntries.map((e) => e.toJson()).toList(),
         'familyConfig': familyConfig?.toJson(),
         'aiProvider': aiProvider.storageValue,
         'apiKeys': apiKeys,
@@ -61,6 +65,10 @@ class AppBackupPayload {
       shoppingItems: (json['shoppingItems'] as List? ?? [])
           .whereType<Map>()
           .map((e) => ShoppingItem.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      mealPlanEntries: (json['mealPlanEntries'] as List? ?? [])
+          .whereType<Map>()
+          .map((e) => MealPlanEntry.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
       familyConfig: json['familyConfig'] is Map
           ? FamilyConfig.fromJson(

@@ -326,4 +326,68 @@ Zubereitung:
     expect(recipes.any((r) => r.title == 'Backup-Salat'), isTrue);
     expect(await storage.getApiKeyFor(AiProvider.gemini), 'AIza-test');
   });
+
+  test('Einkaufsliste behält gleiche Zutat für verschiedene Rezepte', () async {
+    final storage = RecipeStorage();
+    final pasta = Recipe(
+      id: 'r1',
+      title: 'Pasta',
+      ingredients: const ['Salz', 'Nudeln'],
+      steps: const ['Kochen'],
+      sourceUrl: '',
+      createdAt: DateTime.now(),
+    );
+    final soup = Recipe(
+      id: 'r2',
+      title: 'Suppe',
+      ingredients: const ['Salz', 'Karotten'],
+      steps: const ['Kochen'],
+      sourceUrl: '',
+      createdAt: DateTime.now(),
+    );
+
+    await storage.addRecipeIngredientsToShopping(pasta);
+    await storage.addRecipeIngredientsToShopping(soup);
+    final items = await storage.loadShoppingItems();
+
+    expect(items.where((e) => e.name == 'Salz').length, 2);
+    expect(items.where((e) => e.recipeTitle == 'Pasta').length, 2);
+    expect(items.where((e) => e.recipeTitle == 'Suppe').length, 2);
+  });
+
+  test('Einstellung Einkaufsliste einklappen speichert sich', () async {
+    final storage = RecipeStorage();
+    expect(await storage.isShoppingCollapseEnabled(), isFalse);
+    await storage.setShoppingCollapseEnabled(true);
+    expect(await storage.isShoppingCollapseEnabled(), isTrue);
+    await storage.setShoppingCollapseEnabled(false);
+    expect(await storage.isShoppingCollapseEnabled(), isFalse);
+  });
+
+  test('Wochenplan speichert ein Rezept pro Tag', () async {
+    final repo = AppRepository(
+      storage: RecipeStorage(),
+      sync: FamilySyncService(
+        client: MockClient((_) async => http.Response('[]', 200)),
+      ),
+    );
+    final recipe = Recipe(
+      id: 'mp1',
+      title: 'Ofengemüse',
+      ingredients: const ['Zucchini', 'Paprika'],
+      steps: const ['Backen'],
+      sourceUrl: '',
+      createdAt: DateTime.now(),
+    );
+    await repo.saveRecipe(recipe);
+
+    final monday = DateTime(2026, 7, 20);
+    await repo.setMealPlanDay(date: monday, recipe: recipe);
+    final entries = await repo.loadMealPlan(pullRemote: false);
+    expect(entries.length, 1);
+    expect(entries.first.recipeTitle, 'Ofengemüse');
+
+    final added = await repo.addWeekRecipesToShopping(entries);
+    expect(added, 2);
+  });
 }

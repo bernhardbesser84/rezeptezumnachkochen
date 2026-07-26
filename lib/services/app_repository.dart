@@ -1,5 +1,6 @@
 import '../models/family_config.dart';
 import '../models/family_config_cloud.dart';
+import '../models/meal_plan_entry.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 import 'family_sync_service.dart';
@@ -124,6 +125,64 @@ class AppRepository {
     return added.length;
   }
 
+  Future<List<MealPlanEntry>> loadMealPlan({bool pullRemote = true}) async {
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (pullRemote && config != null && config.hasEffectiveCloud) {
+      try {
+        final remote = await sync.pullMealPlanEntries(config);
+        await storage.saveMealPlanEntries(remote);
+        return remote;
+      } catch (_) {
+        // lokale Liste behalten (z. B. wenn Tabelle noch fehlt)
+      }
+    }
+    return storage.loadMealPlanEntries();
+  }
+
+  Future<MealPlanEntry> setMealPlanDay({
+    required DateTime date,
+    required Recipe recipe,
+  }) async {
+    final entry = await storage.setMealPlanForDate(date: date, recipe: recipe);
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config != null && config.hasEffectiveCloud) {
+      try {
+        await sync.pushMealPlanEntry(config, entry);
+      } catch (_) {
+        // Cloud optional – lokal bleibt gespeichert
+      }
+    }
+    await _backupQuietly();
+    return entry;
+  }
+
+  Future<void> clearMealPlanDay(DateTime date) async {
+    final removed = await storage.clearMealPlanForDate(date);
+    if (removed == null) return;
+    final config = _cloud(await storage.loadFamilyConfig());
+    if (config != null && config.hasEffectiveCloud) {
+      try {
+        await sync.deleteMealPlanEntry(config, removed.id);
+      } catch (_) {}
+    }
+    await _backupQuietly();
+  }
+
+  /// Alle geplanten Rezepte einer Woche auf die Einkaufsliste setzen.
+  Future<int> addWeekRecipesToShopping(List<MealPlanEntry> weekEntries) async {
+    final recipes = await storage.loadRecipes();
+    final byId = {for (final r in recipes) r.id: r};
+    var total = 0;
+    final seen = <String>{};
+    for (final entry in weekEntries) {
+      if (!seen.add(entry.recipeId)) continue;
+      final recipe = byId[entry.recipeId];
+      if (recipe == null) continue;
+      total += await addRecipeToShopping(recipe);
+    }
+    return total;
+  }
+
   Future<void> saveFamily(FamilyConfig config) async {
     await storage.saveFamilyConfig(config.withEffectiveCloud());
     await _backupQuietly();
@@ -135,18 +194,30 @@ class AppRepository {
 
     final localRecipes = await storage.loadRecipes();
     final localShopping = await storage.loadShoppingItems();
+    final localMealPlan = await storage.loadMealPlanEntries();
 
     final remoteRecipes = await sync.pullRecipes(config);
     final remoteShopping = await sync.pullShoppingItems(config);
+    List<MealPlanEntry> remoteMealPlan = const [];
+    try {
+      remoteMealPlan = await sync.pullMealPlanEntries(config);
+    } catch (_) {
+      // Tabelle ggf. noch nicht angelegt
+    }
 
     final mergedRecipes = _mergeRecipes(localRecipes, remoteRecipes);
     final mergedShopping = _mergeShopping(localShopping, remoteShopping);
+    final mergedMealPlan = _mergeMealPlan(localMealPlan, remoteMealPlan);
 
     await storage.saveRecipes(mergedRecipes);
     await storage.saveShoppingItems(mergedShopping);
+    await storage.saveMealPlanEntries(mergedMealPlan);
 
     await sync.pushAllRecipes(config, mergedRecipes);
     await sync.pushAllShoppingItems(config, mergedShopping);
+    try {
+      await sync.pushAllMealPlanEntries(config, mergedMealPlan);
+    } catch (_) {}
     await _backupQuietly();
   }
 
@@ -189,5 +260,21 @@ class AppRepository {
         if (a.checked != b.checked) return a.checked ? 1 : -1;
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
+  }
+
+  List<MealPlanEntry> _mergeMealPlan(
+    List<MealPlanEntry> local,
+    List<MealPlanEntry> remote,
+  ) {
+    // Pro Tag gewinnt der neuere Eintrag.
+    final byDate = <String, MealPlanEntry>{};
+    for (final entry in [...remote, ...local]) {
+      final existing = byDate[entry.dateKey];
+      if (existing == null || entry.updatedAt.isAfter(existing.updatedAt)) {
+        byDate[entry.dateKey] = entry;
+      }
+    }
+    return byDate.values.toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
   }
 }

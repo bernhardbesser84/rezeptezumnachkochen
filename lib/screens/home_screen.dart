@@ -16,6 +16,7 @@ import '../utils/platform_hints.dart';
 import '../widgets/pwa_update_banner.dart';
 import 'add_recipe_screen.dart';
 import 'family_screen.dart';
+import 'meal_plan_screen.dart';
 import 'recipe_detail_screen.dart';
 import 'settings_screen.dart';
 import 'shopping_list_screen.dart';
@@ -240,6 +241,15 @@ class _HomeScreenState extends State<HomeScreen> {
     await _reload();
   }
 
+  Future<void> _openMealPlan() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MealPlanScreen(repository: widget.repository),
+      ),
+    );
+    await _reload();
+  }
+
   Future<void> _openFamily() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -347,6 +357,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         openShopping: _openShoppingCount,
                         onFamily: _openFamily,
                         onShopping: _openShopping,
+                        onMealPlan: _openMealPlan,
                       ),
                       const SizedBox(height: 28),
                       Row(
@@ -565,6 +576,7 @@ class _FamilyStatusCard extends StatelessWidget {
     required this.openShopping,
     required this.onFamily,
     required this.onShopping,
+    required this.onMealPlan,
   });
 
   final bool cloudReady;
@@ -572,6 +584,7 @@ class _FamilyStatusCard extends StatelessWidget {
   final int openShopping;
   final VoidCallback onFamily;
   final VoidCallback onShopping;
+  final VoidCallback onMealPlan;
 
   @override
   Widget build(BuildContext context) {
@@ -616,8 +629,8 @@ class _FamilyStatusCard extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             cloudReady
-                ? 'Rezepte und Einkaufsliste werden zwischen iPhone, '
-                    'Tablett und Galaxy geteilt.'
+                ? 'Rezepte, Einkaufsliste und Wochenplan werden zwischen '
+                    'iPhone, Tablett und Galaxy geteilt.'
                 : 'Tippe auf „Familie“, erstelle einen Code und trage die '
                     'Cloud-Daten ein – dann sehen alle dasselbe.',
           ),
@@ -642,6 +655,15 @@ class _FamilyStatusCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onMealPlan,
+              icon: const Icon(Icons.calendar_month_outlined),
+              label: const Text('Wochenplan'),
+            ),
           ),
         ],
       ),
