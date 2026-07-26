@@ -23,7 +23,7 @@ class _ManualRecipeScreenState extends State<ManualRecipeScreen> {
   final _ingredients = TextEditingController();
   final _steps = TextEditingController();
   final _servings = TextEditingController();
-  bool _alsoShopping = true;
+  bool _alsoShopping = false;
   bool _saving = false;
 
   @override

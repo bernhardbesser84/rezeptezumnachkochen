@@ -46,7 +46,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   bool _loading = false;
   bool _fetchingCaption = false;
   bool _fetchingVideo = false;
-  bool _alsoShopping = true;
+  bool _alsoShopping = false;
   bool _useAi = true;
   bool _hasApiKey = false;
   String? _error;
