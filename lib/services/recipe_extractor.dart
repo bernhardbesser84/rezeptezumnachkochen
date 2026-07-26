@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../models/ai_provider.dart';
 import '../models/recipe.dart';
 import 'media_transcript.dart';
+import 'pdf_text_reader.dart';
 
 class PagePreview {
   PagePreview({
@@ -556,6 +557,103 @@ class RecipeExtractor {
       throw Exception('Claude-Antwort war leer. Bitte erneut versuchen.');
     }
     return _recipeFromAiJson(text, '');
+  }
+
+  /// Liest ein Rezept aus einer PDF-Datei (gespeicherte Web-Rezepte o. Ä.).
+  ///
+  /// 1) Text aus der PDF ziehen und mit KI auswerten.
+  /// 2) Falls kaum Text (Scan): bei Gemini die PDF direkt mitschicken.
+  Future<Recipe> extractRecipeFromPdf({
+    required Uint8List pdfBytes,
+    required String apiKey,
+    AiProvider provider = AiProvider.gemini,
+    String? fileName,
+  }) async {
+    if (pdfBytes.isEmpty) {
+      throw Exception('Bitte eine PDF-Datei wählen.');
+    }
+
+    String extracted = '';
+    try {
+      extracted = PdfTextReader.extractText(pdfBytes);
+    } catch (_) {
+      extracted = '';
+    }
+
+    final hasUsableText = extracted.trim().length >= 80;
+    if (hasUsableText) {
+      final label = (fileName ?? 'Rezept.pdf').trim();
+      return extractRecipe(
+        sourceText: [
+          if (label.isNotEmpty) 'PDF-Datei: $label',
+          'Rezepttext aus PDF:',
+          extracted.trim(),
+        ].join('\n\n'),
+        apiKey: apiKey,
+        provider: provider,
+        useAi: true,
+      );
+    }
+
+    if (provider == AiProvider.gemini) {
+      return _extractPdfWithGemini(
+        pdfBytes: pdfBytes,
+        apiKey: apiKey,
+        fileName: fileName,
+      );
+    }
+
+    throw Exception(
+      'In der PDF wurde kaum Text gefunden (evtl. nur ein Scan). '
+      'Bitte Gemini als KI-Anbieter wählen oder den Text aus der PDF '
+      'kopieren und einfügen.',
+    );
+  }
+
+  Future<Recipe> _extractPdfWithGemini({
+    required Uint8List pdfBytes,
+    required String apiKey,
+    String? fileName,
+  }) async {
+    if (pdfBytes.length > PdfTextReader.maxBytes) {
+      throw Exception(
+        'Die PDF ist zu groß (max. 15 MB). '
+        'Bitte eine kleinere Datei wählen.',
+      );
+    }
+
+    final label = (fileName ?? 'Rezept.pdf').trim();
+    final prompt =
+        'Lies diese PDF-Datei eines Rezepts'
+        '${label.isEmpty ? '' : ' („$label“)'} '
+        '(Web-Rezept, Kochbuch-Export o. Ä.). '
+        'Extrahiere Titel, Zutaten und Zubereitungsschritte. '
+        'Ignoriere Werbung, Navigation und „Summarize & Save“-Buttons. '
+        'Erstelle ein nachkochbares Rezept auf Deutsch '
+        'mit metrischen Mengenangaben. $_systemPrompt';
+
+    final body = await _postGeminiGenerateContent(
+      apiKey: apiKey,
+      payload: {
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': prompt},
+              {
+                'inline_data': {
+                  'mime_type': 'application/pdf',
+                  'data': base64Encode(pdfBytes),
+                },
+              },
+            ],
+          },
+        ],
+        'generationConfig': _geminiJsonGenerationConfig(),
+      },
+      timeout: const Duration(seconds: 90),
+    );
+    return _recipeFromAiJson(_geminiAnswerText(body), '');
   }
 
   /// Manuelles Rezept ohne KI (immer möglich).
