@@ -23,6 +23,7 @@ class RecipeStorage {
   static const _googleBackupEnabledKey = 'google_backup_enabled';
   static const _googleBackupEmailKey = 'google_backup_email';
   static const _googleBackupLastAtKey = 'google_backup_last_at';
+  static const _shoppingCollapseKey = 'shopping_collapse_recipes';
 
   final _uuid = const Uuid();
 
@@ -303,6 +304,17 @@ class RecipeStorage {
         ),
       );
     }
+  }
+
+  /// Wenn true: Rezept-Abschnitte in der Einkaufsliste sind einklappbar.
+  Future<bool> isShoppingCollapseEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_shoppingCollapseKey) ?? false;
+  }
+
+  Future<void> setShoppingCollapseEnabled(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_shoppingCollapseKey, value);
   }
 
   Future<bool> wasDemoSeeded() async {

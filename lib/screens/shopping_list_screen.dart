@@ -21,6 +21,12 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
   String? _error;
   Timer? _pollTimer;
 
+  /// Einstellung: Rezepte einklappbar (aus Einstellungen).
+  bool _collapseEnabled = false;
+
+  /// Welche Rezept-Gruppen gerade geöffnet sind (nur wenn Einklappen an).
+  final Set<String> _expandedKeys = {};
+
   @override
   void initState() {
     super.initState();
@@ -40,9 +46,12 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     }
     try {
       final items = await widget.repository.loadShopping(pullRemote: true);
+      final collapse =
+          await widget.repository.storage.isShoppingCollapseEnabled();
       if (mounted) {
         setState(() {
           _items = items;
+          _collapseEnabled = collapse;
           _loading = false;
         });
       }
@@ -87,6 +96,16 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     await _reload();
   }
 
+  void _toggleGroup(String key) {
+    setState(() {
+      if (_expandedKeys.contains(key)) {
+        _expandedKeys.remove(key);
+      } else {
+        _expandedKeys.add(key);
+      }
+    });
+  }
+
   /// Zutaten nach Rezept gruppieren – Reihenfolge wie hinzugefügt.
   List<_ShoppingGroup> _groupsFor(List<ShoppingItem> items) {
     final buckets = <String, List<ShoppingItem>>{};
@@ -118,6 +137,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     return [
       for (var i = 0; i < order.length; i++)
         _ShoppingGroup(
+          key: order[i],
           number: i + 1,
           title: titles[order[i]]!,
           items: (buckets[order[i]]!
@@ -128,6 +148,36 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
               .toList(),
         ),
     ];
+  }
+
+  Widget _ingredientTile(ShoppingItem item) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 2),
+      child: CheckboxListTile(
+        value: item.checked,
+        onChanged: (value) => _toggle(item, value),
+        controlAffinity: ListTileControlAffinity.leading,
+        contentPadding: const EdgeInsets.only(right: 0),
+        dense: true,
+        title: Text(
+          item.name,
+          style: TextStyle(
+            decoration: item.checked ? TextDecoration.lineThrough : null,
+            color: item.checked ? Colors.black54 : AppTheme.ink,
+            fontWeight: FontWeight.w600,
+            fontSize: 16,
+          ),
+        ),
+        secondary: IconButton(
+          tooltip: 'Löschen',
+          onPressed: () async {
+            await widget.repository.deleteShoppingItem(item.id);
+            await _reload(silent: true);
+          },
+          icon: const Icon(Icons.close, size: 20),
+        ),
+      ),
+    );
   }
 
   @override
@@ -183,6 +233,14 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                       ),
                     ),
                   ),
+                  if (_collapseEnabled) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Tipp: Tippe auf einen Rezeptnamen, um die Zutaten '
+                      'ein- oder auszuklappen.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     Text(
@@ -204,55 +262,79 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                     )
                   else
                     for (final group in groups) ...[
-                      // Rezeptname als nummerierte Überschrift
-                      Padding(
-                        padding: EdgeInsets.only(
-                          top: group.number == 1 ? 4 : 20,
-                          bottom: 6,
-                        ),
-                        child: Text(
-                          '${group.number}. ${group.title}',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                color: AppTheme.ink,
-                                fontWeight: FontWeight.w800,
-                                height: 1.25,
+                      Builder(
+                        builder: (context) {
+                          final openInGroup =
+                              group.items.where((e) => !e.checked).length;
+                          final expanded = !_collapseEnabled ||
+                              _expandedKeys.contains(group.key);
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Padding(
+                                padding: EdgeInsets.only(
+                                  top: group.number == 1 ? 4 : 16,
+                                  bottom: 4,
+                                ),
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    onTap: _collapseEnabled
+                                        ? () => _toggleGroup(group.key)
+                                        : null,
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                        horizontal: 4,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              '${group.number}. ${group.title}',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleLarge
+                                                  ?.copyWith(
+                                                    color: AppTheme.ink,
+                                                    fontWeight: FontWeight.w800,
+                                                    height: 1.25,
+                                                  ),
+                                            ),
+                                          ),
+                                          if (_collapseEnabled) ...[
+                                            Text(
+                                              '$openInGroup offen',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(
+                                                    color: AppTheme.inkMuted,
+                                                  ),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Icon(
+                                              expanded
+                                                  ? Icons.expand_less
+                                                  : Icons.expand_more,
+                                              color: AppTheme.seed,
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
-                        ),
+                              if (expanded)
+                                for (final item in group.items)
+                                  _ingredientTile(item),
+                            ],
+                          );
+                        },
                       ),
-                      // Darunter alle Zutaten dieses Rezepts – tippen = durchstreichen
-                      for (final item in group.items)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 4, bottom: 2),
-                          child: CheckboxListTile(
-                            value: item.checked,
-                            onChanged: (value) => _toggle(item, value),
-                            controlAffinity: ListTileControlAffinity.leading,
-                            contentPadding: const EdgeInsets.only(right: 0),
-                            dense: true,
-                            title: Text(
-                              item.name,
-                              style: TextStyle(
-                                decoration: item.checked
-                                    ? TextDecoration.lineThrough
-                                    : null,
-                                color: item.checked
-                                    ? Colors.black54
-                                    : AppTheme.ink,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 16,
-                              ),
-                            ),
-                            secondary: IconButton(
-                              tooltip: 'Löschen',
-                              onPressed: () async {
-                                await widget.repository
-                                    .deleteShoppingItem(item.id);
-                                await _reload(silent: true);
-                              },
-                              icon: const Icon(Icons.close, size: 20),
-                            ),
-                          ),
-                        ),
                     ],
                 ],
               ),
@@ -263,11 +345,13 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
 
 class _ShoppingGroup {
   const _ShoppingGroup({
+    required this.key,
     required this.number,
     required this.title,
     required this.items,
   });
 
+  final String key;
   final int number;
   final String title;
   final List<ShoppingItem> items;

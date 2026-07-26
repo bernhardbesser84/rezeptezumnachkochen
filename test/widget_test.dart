@@ -355,6 +355,15 @@ Zubereitung:
     expect(items.where((e) => e.recipeTitle == 'Suppe').length, 2);
   });
 
+  test('Einstellung Einkaufsliste einklappen speichert sich', () async {
+    final storage = RecipeStorage();
+    expect(await storage.isShoppingCollapseEnabled(), isFalse);
+    await storage.setShoppingCollapseEnabled(true);
+    expect(await storage.isShoppingCollapseEnabled(), isTrue);
+    await storage.setShoppingCollapseEnabled(false);
+    expect(await storage.isShoppingCollapseEnabled(), isFalse);
+  });
+
   test('Wochenplan speichert ein Rezept pro Tag', () async {
     final repo = AppRepository(
       storage: RecipeStorage(),

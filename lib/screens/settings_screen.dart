@@ -32,6 +32,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loading = true;
   bool _obscure = false; // Auf dem iPhone sonst oft kein „Einfügen“
   bool _showGeminiOverride = false;
+  bool _shoppingCollapse = false;
   AiProvider _provider =
       GeminiDefaults.hasBuiltInKey ? AiProvider.gemini : AiProvider.openai;
 
@@ -47,14 +48,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final provider = await widget.repository.storage.getAiProvider();
     final key = await widget.repository.storage.getApiKeyFor(provider);
+    final collapse =
+        await widget.repository.storage.isShoppingCollapseEnabled();
     _provider = provider;
     _controller.text = key ?? '';
+    _shoppingCollapse = collapse;
     // Eigenen Gemini-Schlüssel nur zeigen, wenn er vom eingebauten abweicht.
     _showGeminiOverride = provider == AiProvider.gemini &&
         GeminiDefaults.hasBuiltInKey &&
         (key?.trim().isNotEmpty ?? false) &&
         key!.trim() != GeminiDefaults.apiKey.trim();
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _setShoppingCollapse(bool value) async {
+    setState(() => _shoppingCollapse = value);
+    await widget.repository.storage.setShoppingCollapseEnabled(value);
   }
 
   Future<void> _persistCurrentKey() async {
@@ -186,6 +195,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
+                const Divider(height: 32),
+                const Text(
+                  'Einkaufsliste',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.unfold_less),
+                  title: const Text('Rezepte einklappen'),
+                  subtitle: const Text(
+                    'Rezeptnamen antippen, um Zutaten ein- oder '
+                    'auszuklappen — kürzere Liste',
+                  ),
+                  value: _shoppingCollapse,
+                  onChanged: _setShoppingCollapse,
+                ),
                 const Divider(height: 32),
                 const Text(
                   'KI-Anbieter',
