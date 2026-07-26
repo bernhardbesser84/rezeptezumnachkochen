@@ -21,7 +21,8 @@ dependencies:
   google_sign_in: 6.3.0
   web: ^1.1.1
   supabase_flutter: ^2.16.0
-
+  syncfusion_flutter_pdf: ^34.1.32
+  file_selector: ^1.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

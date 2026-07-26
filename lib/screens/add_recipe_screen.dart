@@ -11,6 +11,7 @@ import '../services/youtube_caption.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
 import 'manual_recipe_screen.dart';
+import 'pdf_recipe_screen.dart';
 import 'photo_recipe_screen.dart';
 
 class AddRecipeScreen extends StatefulWidget {
@@ -497,6 +498,20 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
     }
   }
 
+  Future<void> _openPdf() async {
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PdfRecipeScreen(
+          repository: widget.repository,
+          extractor: widget.extractor,
+        ),
+      ),
+    );
+    if (result != null && mounted) {
+      Navigator.pop(context, result);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final webHint = PlatformHints.isWeb;
@@ -589,6 +604,12 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _loading ? null : _openPdf,
+            icon: const Icon(Icons.picture_as_pdf),
+            label: const Text('PDF auswählen'),
           ),
           const SizedBox(height: 18),
           TextField(
