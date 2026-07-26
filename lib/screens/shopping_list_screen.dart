@@ -87,10 +87,11 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     await _reload();
   }
 
-  /// Zutaten nach Rezept sortieren – so sieht man klar, was wohin gehört.
+  /// Zutaten nach Rezept gruppieren – Reihenfolge wie hinzugefügt.
   List<_ShoppingGroup> _groupsFor(List<ShoppingItem> items) {
     final buckets = <String, List<ShoppingItem>>{};
     final titles = <String, String>{};
+    final order = <String>[];
 
     for (final item in items) {
       final title = item.recipeTitle?.trim() ?? '';
@@ -99,24 +100,27 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
           : title.isNotEmpty
               ? 'title:$title'
               : '_none';
-      buckets.putIfAbsent(key, () => []).add(item);
+      if (!buckets.containsKey(key)) {
+        buckets[key] = [];
+        order.add(key);
+      }
+      buckets[key]!.add(item);
       titles[key] = title.isNotEmpty ? title : 'Ohne Rezept';
     }
 
-    final keys = buckets.keys.toList()
-      ..sort((a, b) {
-        if (a == '_none') return 1;
-        if (b == '_none') return -1;
-        return titles[a]!
-            .toLowerCase()
-            .compareTo(titles[b]!.toLowerCase());
-      });
+    // „Ohne Rezept“ ans Ende, sonst Reihenfolge beibehalten.
+    order.sort((a, b) {
+      if (a == '_none') return 1;
+      if (b == '_none') return -1;
+      return 0;
+    });
 
     return [
-      for (final key in keys)
+      for (var i = 0; i < order.length; i++)
         _ShoppingGroup(
-          title: titles[key]!,
-          items: (buckets[key]!
+          number: i + 1,
+          title: titles[order[i]]!,
+          items: (buckets[order[i]]!
                 ..sort((a, b) {
                   if (a.checked != b.checked) return a.checked ? 1 : -1;
                   return a.name.toLowerCase().compareTo(b.name.toLowerCase());
@@ -200,45 +204,31 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                     )
                   else
                     for (final group in groups) ...[
+                      // Rezeptname als nummerierte Überschrift
                       Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 8),
-                        child: Row(
-                          children: [
-                            Icon(
-                              group.title == 'Ohne Rezept'
-                                  ? Icons.shopping_bag_outlined
-                                  : Icons.restaurant_menu_rounded,
-                              size: 18,
-                              color: AppTheme.seed,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                group.title,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(color: AppTheme.seed),
+                        padding: EdgeInsets.only(
+                          top: group.number == 1 ? 4 : 20,
+                          bottom: 6,
+                        ),
+                        child: Text(
+                          '${group.number}. ${group.title}',
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                color: AppTheme.ink,
+                                fontWeight: FontWeight.w800,
+                                height: 1.25,
                               ),
-                            ),
-                            Text(
-                              '${group.items.where((e) => !e.checked).length}/'
-                              '${group.items.length}',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(color: AppTheme.inkMuted),
-                            ),
-                          ],
                         ),
                       ),
+                      // Darunter alle Zutaten dieses Rezepts – tippen = durchstreichen
                       for (final item in group.items)
-                        Card(
-                          margin: const EdgeInsets.only(bottom: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4, bottom: 2),
                           child: CheckboxListTile(
                             value: item.checked,
                             onChanged: (value) => _toggle(item, value),
                             controlAffinity: ListTileControlAffinity.leading,
+                            contentPadding: const EdgeInsets.only(right: 0),
+                            dense: true,
                             title: Text(
                               item.name,
                               style: TextStyle(
@@ -249,6 +239,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                                     ? Colors.black54
                                     : AppTheme.ink,
                                 fontWeight: FontWeight.w600,
+                                fontSize: 16,
                               ),
                             ),
                             secondary: IconButton(
@@ -258,7 +249,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                                     .deleteShoppingItem(item.id);
                                 await _reload(silent: true);
                               },
-                              icon: const Icon(Icons.close),
+                              icon: const Icon(Icons.close, size: 20),
                             ),
                           ),
                         ),
@@ -271,8 +262,13 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
 }
 
 class _ShoppingGroup {
-  const _ShoppingGroup({required this.title, required this.items});
+  const _ShoppingGroup({
+    required this.number,
+    required this.title,
+    required this.items,
+  });
 
+  final int number;
   final String title;
   final List<ShoppingItem> items;
 }
