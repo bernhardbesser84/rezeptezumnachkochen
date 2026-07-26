@@ -233,9 +233,8 @@ class RecipeExtractor {
           'Untertitel/Ton, Link-Infos).',
       'WICHTIG: Erfinde KEIN anderes Gericht. Wenn Quellen einen '
           'Gerichtsnamen nennen (z. B. „High Protein Döner Wrap“), '
-          'muss title genau dazu passen.',
-      'Schreibe korrektes Deutsch mit ä, ö, ü und ß '
-          '(nicht „Hhnchen“ oder „Gemsebrhe“).',
+          'muss title dazu passen (auf Deutsch).',
+      RecipeExtractor.languageAndUnitsRules,
       'Erfinde KEIN „klassisches Ersatzrezept“ (z. B. Frikadellen, '
           'irgendetwas Beliebtes), nur weil Details fehlen.',
       if (hasSpokenSource) ...[
@@ -253,7 +252,8 @@ class RecipeExtractor {
             'oder Schritte selbst eintragen.“).',
         'In notes klar schreiben: Die Zubereitung wird im Video gesprochen; '
             'ohne Video/Ton kann sie nicht zuverlässig übernommen werden.',
-        'Zutaten und Mengen aus der Caption trotzdem so genau wie möglich übernehmen.',
+        'Zutaten und Mengen aus der Caption trotzdem übernehmen — '
+            'auf Deutsch und in metrischen Einheiten.',
       ],
       if (hasSpokenSource)
         'Fehlen einzelne Mengen: nur für DIESES Gericht typisch ergänzen '
@@ -385,14 +385,16 @@ class RecipeExtractor {
     final prompt = images.length == 1
         ? 'Lies dieses Foto eines Rezepts (Papier, Screenshot oder '
             'Social-Media-Bild mit Text). '
-            'Erstelle daraus ein nachkochbares Rezept. $_systemPrompt'
+            'Erstelle daraus ein nachkochbares Rezept auf Deutsch '
+            'mit metrischen Mengenangaben. $_systemPrompt'
         : 'Hier sind ${images.length} Fotos/Screenshots desselben Rezepts '
             '(oft Schritt für Schritt, mit Text im Bild). '
             'Lies ALLE Bilder der Reihe nach. '
             'Sammle Zutaten und Zubereitungsschritte aus Text und Bild. '
             'Reihenfolge der Bilder = Reihenfolge der Schritte, '
             'wenn die Bilder klar aufeinander folgen. '
-            'Erstelle EIN vollständiges Rezept. $_systemPrompt';
+            'Erstelle EIN vollständiges Rezept auf Deutsch '
+            'mit metrischen Mengenangaben. $_systemPrompt';
 
     switch (provider) {
       case AiProvider.openai:
@@ -590,6 +592,28 @@ class RecipeExtractor {
     );
   }
 
+  /// Sprache + Einheiten — gilt für Video-, Text- und Foto-Auswertung.
+  static const languageAndUnitsRules =
+      'Sprache: Immer korrektes Deutsch mit Umlauten (ä, ö, ü, ß). '
+      'Wenn die Vorlage Englisch oder eine andere Sprache ist: '
+      'Titel, Zutaten, Schritte und Notizen vollständig ins Deutsche übersetzen. '
+      'Gerichtsnamen sinnvoll eindeutschen '
+      '(z. B. „Watermelon Feta Salad“ → „Wassermelonen-Feta-Salat“), '
+      'bekannte Markennamen nur behalten wenn nötig. '
+      'WICHTIG: Immer ä, ö, ü und ß schreiben. '
+      'Falsch: „Hhnchen“, „Gemsebrhe“, „Hirtenkse“, „fr“, „geschtzt“. '
+      'Richtig: „Hähnchen“, „Gemüsebrühe“, „Hirtenkäse“, „für“, „geschätzt“. '
+      'Mengen und Einheiten: Immer auf in Deutschland übliche Angaben umrechnen. '
+      'Nutze g, kg, ml, l, EL, TL, Prise, Stück — nicht cup, cups, oz, fl oz, lb, tbsp, tsp. '
+      'Richtwerte: 1 cup Flüssigkeit ≈ 240 ml; 1 cup Mehl ≈ 120 g; '
+      '1 cup Zucker ≈ 200 g; 1 cup Butter ≈ 225 g; '
+      '1 tbsp / tablespoon ≈ 1 EL (15 ml); 1 tsp / teaspoon ≈ 1 TL (5 ml); '
+      '1 oz ≈ 28 g; 1 fl oz ≈ 30 ml; 1 lb ≈ 450 g. '
+      'Temperaturen von °F nach °C umrechnen (z. B. 350°F ≈ 175°C). '
+      'Bei Umrechnung aus Volumen (cup) in Gramm: sinnvollen typischen Wert wählen '
+      'und bei Unsicherheit in notes kurz „Mengen umgerechnet/geschätzt“ vermerken. '
+      'Schreibe gerundete, kochtaugliche Mengen (z. B. 250 ml, nicht 236,6 ml).';
+
   static const _systemPrompt =
       'Du hilfst beim Nachkochen von Rezeptvideos. '
       'Antworte NUR als JSON mit den Feldern: '
@@ -597,10 +621,7 @@ class RecipeExtractor {
       'prepTimeMinutes (number|null), '
       'ingredients (string[]), steps (string[]), '
       'notes (string|null). '
-      'Sprache: korrektes Deutsch mit Umlauten. '
-      'WICHTIG: Immer ä, ö, ü und ß schreiben. '
-      'Falsch: „Hhnchen“, „Gemsebrhe“, „Hirtenkse“, „fr“, „geschtzt“. '
-      'Richtig: „Hähnchen“, „Gemüsebrühe“, „Hirtenkäse“, „für“, „geschätzt“. '
+      '$languageAndUnitsRules '
       'title MUSS dem Gericht aus den Quellen entsprechen '
       '(z. B. „High Protein Döner Wrap“, „Knoblauch-Garnelen“). '
       'Niemals Facebook/Instagram/TikTok/YouTube oder „Rezept von …“ '
@@ -611,7 +632,8 @@ class RecipeExtractor {
       'oder klarer Caption-Anleitung. '
       'Wenn nur Zutatenliste ohne Ton/Video: keine erfundene Kochshow, '
       'sondern kurze Platzhalter-Schritte und Hinweis in notes. '
-      'Nutze Caption vor allem für Zutaten/Mengen. '
+      'Nutze Caption vor allem für Zutaten/Mengen '
+      '(übersetzt und metrisch umgerechnet). '
       'Schreibe klare, kurze Kochschritte.';
 
   Future<Recipe> _extractWithAi({
@@ -621,7 +643,8 @@ class RecipeExtractor {
     required String apiKey,
   }) async {
     final userPrompt =
-        'Erstelle daraus ein nachkochbares Rezept:\n$combinedText';
+        'Erstelle daraus ein nachkochbares Rezept auf Deutsch '
+        'mit metrischen Mengenangaben:\n$combinedText';
 
     switch (provider) {
       case AiProvider.openai:
