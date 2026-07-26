@@ -87,6 +87,45 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     await _reload();
   }
 
+  /// Zutaten nach Rezept sortieren – so sieht man klar, was wohin gehört.
+  List<_ShoppingGroup> _groupsFor(List<ShoppingItem> items) {
+    final buckets = <String, List<ShoppingItem>>{};
+    final titles = <String, String>{};
+
+    for (final item in items) {
+      final title = item.recipeTitle?.trim() ?? '';
+      final key = (item.recipeId != null && item.recipeId!.isNotEmpty)
+          ? 'id:${item.recipeId}'
+          : title.isNotEmpty
+              ? 'title:$title'
+              : '_none';
+      buckets.putIfAbsent(key, () => []).add(item);
+      titles[key] = title.isNotEmpty ? title : 'Ohne Rezept';
+    }
+
+    final keys = buckets.keys.toList()
+      ..sort((a, b) {
+        if (a == '_none') return 1;
+        if (b == '_none') return -1;
+        return titles[a]!
+            .toLowerCase()
+            .compareTo(titles[b]!.toLowerCase());
+      });
+
+    return [
+      for (final key in keys)
+        _ShoppingGroup(
+          title: titles[key]!,
+          items: (buckets[key]!
+                ..sort((a, b) {
+                  if (a.checked != b.checked) return a.checked ? 1 : -1;
+                  return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+                }))
+              .toList(),
+        ),
+    ];
+  }
+
   @override
   void dispose() {
     _pollTimer?.cancel();
@@ -97,6 +136,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
   Widget build(BuildContext context) {
     final openCount = _items.where((e) => !e.checked).length;
     final checkedCount = _items.where((e) => e.checked).length;
+    final groups = _groupsFor(_items);
 
     return Scaffold(
       appBar: AppBar(
@@ -159,43 +199,80 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                       ),
                     )
                   else
-                    ..._items.map(
-                      (item) => Card(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: CheckboxListTile(
-                          value: item.checked,
-                          onChanged: (value) => _toggle(item, value),
-                          controlAffinity: ListTileControlAffinity.leading,
-                          title: Text(
-                            item.name,
-                            style: TextStyle(
-                              decoration: item.checked
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                              color: item.checked
-                                  ? Colors.black54
-                                  : AppTheme.ink,
-                              fontWeight: FontWeight.w600,
+                    for (final group in groups) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8, bottom: 8),
+                        child: Row(
+                          children: [
+                            Icon(
+                              group.title == 'Ohne Rezept'
+                                  ? Icons.shopping_bag_outlined
+                                  : Icons.restaurant_menu_rounded,
+                              size: 18,
+                              color: AppTheme.seed,
                             ),
-                          ),
-                          subtitle: item.recipeTitle == null
-                              ? null
-                              : Text('aus: ${item.recipeTitle}'),
-                          secondary: IconButton(
-                            tooltip: 'Löschen',
-                            onPressed: () async {
-                              await widget.repository
-                                  .deleteShoppingItem(item.id);
-                              await _reload(silent: true);
-                            },
-                            icon: const Icon(Icons.close),
-                          ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                group.title,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(color: AppTheme.seed),
+                              ),
+                            ),
+                            Text(
+                              '${group.items.where((e) => !e.checked).length}/'
+                              '${group.items.length}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(color: AppTheme.inkMuted),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
+                      for (final item in group.items)
+                        Card(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          child: CheckboxListTile(
+                            value: item.checked,
+                            onChanged: (value) => _toggle(item, value),
+                            controlAffinity: ListTileControlAffinity.leading,
+                            title: Text(
+                              item.name,
+                              style: TextStyle(
+                                decoration: item.checked
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                                color: item.checked
+                                    ? Colors.black54
+                                    : AppTheme.ink,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            secondary: IconButton(
+                              tooltip: 'Löschen',
+                              onPressed: () async {
+                                await widget.repository
+                                    .deleteShoppingItem(item.id);
+                                await _reload(silent: true);
+                              },
+                              icon: const Icon(Icons.close),
+                            ),
+                          ),
+                        ),
+                    ],
                 ],
               ),
             ),
     );
   }
+}
+
+class _ShoppingGroup {
+  const _ShoppingGroup({required this.title, required this.items});
+
+  final String title;
+  final List<ShoppingItem> items;
 }

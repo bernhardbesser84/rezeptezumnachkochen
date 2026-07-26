@@ -8,12 +8,14 @@ import '../config/gemini_defaults.dart';
 import '../config/google_defaults.dart';
 import '../models/ai_provider.dart';
 import '../models/family_config.dart';
+import '../models/meal_plan_entry.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 
 class RecipeStorage {
   static const _recipesKey = 'saved_recipes';
   static const _shoppingKey = 'shopping_items';
+  static const _mealPlanKey = 'meal_plan_entries';
   static const _familyKey = 'family_config';
   static const _seededKey = 'demo_seeded';
   static const _aiProviderKey = 'ai_provider';
@@ -109,14 +111,20 @@ class RecipeStorage {
     Recipe recipe,
   ) async {
     final items = await loadShoppingItems();
-    final existingNames =
-        items.map((e) => e.name.toLowerCase().trim()).toSet();
+    // Gleiche Zutat darf bei verschiedenen Rezepten erscheinen –
+    // so bleibt die Übersicht pro Rezept sauber.
+    final existingKeys = items
+        .map(
+          (e) => '${e.recipeId ?? ''}|${e.name.toLowerCase().trim()}',
+        )
+        .toSet();
     final added = <ShoppingItem>[];
 
     for (final ingredient in recipe.ingredients) {
       final name = ingredient.trim();
       if (name.isEmpty) continue;
-      if (existingNames.contains(name.toLowerCase())) continue;
+      final key = '${recipe.id}|${name.toLowerCase()}';
+      if (existingKeys.contains(key)) continue;
       final item = ShoppingItem(
         id: _uuid.v4(),
         name: name,
@@ -127,11 +135,84 @@ class RecipeStorage {
       );
       items.add(item);
       added.add(item);
-      existingNames.add(name.toLowerCase());
+      existingKeys.add(key);
     }
 
     await saveShoppingItems(items);
     return added;
+  }
+
+  Future<List<MealPlanEntry>> loadMealPlanEntries() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_mealPlanKey);
+    if (raw == null || raw.isEmpty) return [];
+    final list = jsonDecode(raw) as List<dynamic>;
+    return list
+        .map((e) => MealPlanEntry.fromJson(e as Map<String, dynamic>))
+        .toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  Future<void> saveMealPlanEntries(List<MealPlanEntry> entries) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _mealPlanKey,
+      jsonEncode(entries.map((e) => e.toJson()).toList()),
+    );
+  }
+
+  Future<void> upsertMealPlanEntry(MealPlanEntry entry) async {
+    final entries = await loadMealPlanEntries();
+    final index = entries.indexWhere((e) => e.id == entry.id);
+    if (index >= 0) {
+      entries[index] = entry;
+    } else {
+      entries.add(entry);
+    }
+    await saveMealPlanEntries(entries);
+  }
+
+  Future<void> deleteMealPlanEntry(String id) async {
+    final entries = await loadMealPlanEntries();
+    entries.removeWhere((e) => e.id == id);
+    await saveMealPlanEntries(entries);
+  }
+
+  /// Setzt (oder ersetzt) das Rezept für einen Tag.
+  Future<MealPlanEntry> setMealPlanForDate({
+    required DateTime date,
+    required Recipe recipe,
+  }) async {
+    final day = MealPlanEntry.dateOnly(date);
+    final key = MealPlanEntry.keyFor(day);
+    final entries = await loadMealPlanEntries();
+    final existingIndex = entries.indexWhere((e) => e.dateKey == key);
+
+    final entry = MealPlanEntry(
+      id: existingIndex >= 0 ? entries[existingIndex].id : _uuid.v4(),
+      date: day,
+      recipeId: recipe.id,
+      recipeTitle: recipe.title,
+      updatedAt: DateTime.now(),
+    );
+
+    if (existingIndex >= 0) {
+      entries[existingIndex] = entry;
+    } else {
+      entries.add(entry);
+    }
+    await saveMealPlanEntries(entries);
+    return entry;
+  }
+
+  Future<MealPlanEntry?> clearMealPlanForDate(DateTime date) async {
+    final key = MealPlanEntry.keyFor(date);
+    final entries = await loadMealPlanEntries();
+    final index = entries.indexWhere((e) => e.dateKey == key);
+    if (index < 0) return null;
+    final removed = entries.removeAt(index);
+    await saveMealPlanEntries(entries);
+    return removed;
   }
 
   Future<FamilyConfig?> loadFamilyConfig() async {

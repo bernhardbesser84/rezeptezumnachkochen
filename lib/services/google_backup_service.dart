@@ -128,6 +128,7 @@ class GoogleBackupService {
       savedAt: DateTime.now(),
       recipes: await storage.loadRecipes(),
       shoppingItems: await storage.loadShoppingItems(),
+      mealPlanEntries: await storage.loadMealPlanEntries(),
       familyConfig: await storage.loadFamilyConfig(),
       aiProvider: await storage.getAiProvider(),
       apiKeys: apiKeys,
@@ -138,6 +139,7 @@ class GoogleBackupService {
   Future<void> applyPayload(AppBackupPayload payload) async {
     await storage.saveRecipes(payload.recipes);
     await storage.saveShoppingItems(payload.shoppingItems);
+    await storage.saveMealPlanEntries(payload.mealPlanEntries);
     if (payload.familyConfig != null) {
       await storage.saveFamilyConfig(payload.familyConfig!);
     }
