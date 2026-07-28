@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../models/ai_provider.dart';
 import '../models/recipe.dart';
 import 'media_transcript.dart';
+import 'pdf_text_normalizer.dart';
 import 'pdf_text_reader.dart';
 
 class PagePreview {
@@ -575,7 +576,9 @@ class RecipeExtractor {
 
     String extracted = '';
     try {
-      extracted = PdfTextReader.extractText(pdfBytes);
+      extracted = PdfTextNormalizer.normalize(
+        PdfTextReader.extractText(pdfBytes),
+      );
     } catch (_) {
       extracted = '';
     }
@@ -583,10 +586,17 @@ class RecipeExtractor {
     final hasUsableText = extracted.trim().length >= 80;
     if (hasUsableText) {
       final label = (fileName ?? 'Rezept.pdf').trim();
+      final ingredientsBlock =
+          PdfTextNormalizer.extractIngredientsSection(extracted);
       return extractRecipe(
         sourceText: [
           if (label.isNotEmpty) 'PDF-Datei: $label',
-          'Rezepttext aus PDF:',
+          'Rezepttext aus PDF (bereinigt):',
+          if (ingredientsBlock != null) ...[
+            'Zutaten aus PDF:',
+            ingredientsBlock,
+            '',
+          ],
           extracted.trim(),
         ].join('\n\n'),
         apiKey: apiKey,
@@ -630,7 +640,11 @@ class RecipeExtractor {
         'Extrahiere Titel, Zutaten und Zubereitungsschritte. '
         'Ignoriere Werbung, Navigation und „Summarize & Save“-Buttons. '
         'Erstelle ein nachkochbares Rezept auf Deutsch '
-        'mit metrischen Mengenangaben. $_systemPrompt';
+        'mit metrischen Mengenangaben. '
+        'Jede Zutat MUSS mit der vollen Menge beginnen (z. B. 680 g, 1/2 EL, 2 TL). '
+        'Brüche als 1/2, 3/4, 1/4 — niemals nur /2 oder ohne Zahl. '
+        'Alle Mengen aus der PDF übernehmen und nur Einheiten umrechnen. '
+        '$_systemPrompt';
 
     final body = await _postGeminiGenerateContent(
       apiKey: apiKey,
@@ -710,7 +724,11 @@ class RecipeExtractor {
       'Temperaturen von °F nach °C umrechnen (z. B. 350°F ≈ 175°C). '
       'Bei Umrechnung aus Volumen (cup) in Gramm: sinnvollen typischen Wert wählen '
       'und bei Unsicherheit in notes kurz „Mengen umgerechnet/geschätzt“ vermerken. '
-      'Schreibe gerundete, kochtaugliche Mengen (z. B. 250 ml, nicht 236,6 ml).';
+      'Schreibe gerundete, kochtaugliche Mengen (z. B. 250 ml, nicht 236,6 ml). '
+      'Jede Zutat beginnt IMMER mit der vollen Menge (Zahl + Einheit), '
+      'z. B. „680 g Lachsfilet“, „1/2 EL Paprika“, „2 EL Butter“. '
+      'Brüche immer als 1/2, 3/4, 1/4 schreiben — niemals nur „/2“ oder ohne Zahl. '
+      'Mengen aus der Vorlage nie weglassen; nur Einheiten umrechnen.';
 
   static const _systemPrompt =
       'Du hilfst beim Nachkochen von Rezeptvideos. '
@@ -1136,6 +1154,16 @@ class RecipeExtractor {
   @visibleForTesting
   String decodeHtmlForTest(String value) => _decodeHtml(value);
 
+  @visibleForTesting
+  String normalizeIngredientQuantityForTest(String line) {
+    return IngredientQuantityNormalizer.normalize(line);
+  }
+
+  @visibleForTesting
+  String normalizePdfTextForTest(String raw) {
+    return PdfTextNormalizer.normalize(raw);
+  }
+
   Recipe _recipeFromAiJson(String raw, String sourceUrl) {
     final parsed = _decodeAiJsonObject(raw);
 
@@ -1162,9 +1190,9 @@ class RecipeExtractor {
     return Recipe(
       id: _uuid.v4(),
       title: title,
-      ingredients: _asStringList(parsed['ingredients'])
-          .map(_fixGermanSpelling)
-          .toList(),
+      ingredients: IngredientQuantityNormalizer.normalizeAll(
+        _asStringList(parsed['ingredients']).map(_fixGermanSpelling).toList(),
+      ),
       steps: _asStringList(parsed['steps']).map(_fixGermanSpelling).toList(),
       sourceUrl: sourceUrl,
       createdAt: DateTime.now(),
