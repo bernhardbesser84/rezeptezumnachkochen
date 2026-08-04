@@ -10,6 +10,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../models/recipe.dart';
 import '../services/app_repository.dart';
 import '../services/google_backup_service.dart';
+import '../services/recipe_category_service.dart';
 import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
@@ -44,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _cloudReady = false;
   String? _familyCode;
   int _openShoppingCount = 0;
+  String _selectedCategory = RecipeCategoryService.allRecipesLabel;
   StreamSubscription<List<SharedMediaFile>>? _shareSub;
   StreamSubscription<Uri>? _linkSub;
   final _appLinks = AppLinks();
@@ -70,6 +72,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() {
         _recipes = recipes;
+        final categories = RecipeCategoryService.collectFromRecipes(recipes);
+        if (_selectedCategory != RecipeCategoryService.allRecipesLabel &&
+            !categories.contains(_selectedCategory)) {
+          _selectedCategory = RecipeCategoryService.allRecipesLabel;
+        }
         _cloudReady = family?.hasCloud ?? false;
         _familyCode = family?.familyCode;
         _openShoppingCount = shopping.where((e) => !e.checked).length;
@@ -184,6 +191,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() {
         _recipes = recipes;
+        final categories = RecipeCategoryService.collectFromRecipes(recipes);
+        if (_selectedCategory != RecipeCategoryService.allRecipesLabel &&
+            !categories.contains(_selectedCategory)) {
+          _selectedCategory = RecipeCategoryService.allRecipesLabel;
+        }
         _cloudReady = family?.hasCloud ?? false;
         _familyCode = family?.familyCode;
         _openShoppingCount = shopping.where((e) => !e.checked).length;
@@ -280,6 +292,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final allCategories = RecipeCategoryService.collectFromRecipes(_recipes);
+    final categoryTabs = [
+      RecipeCategoryService.allRecipesLabel,
+      ...allCategories,
+    ];
+    final visibleRecipes =
+        _selectedCategory == RecipeCategoryService.allRecipesLabel
+            ? _recipes
+            : _recipes
+                .where((recipe) => recipe.categories.contains(_selectedCategory))
+                .toList();
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: false,
@@ -368,15 +392,34 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const Spacer(),
                           Text(
-                            '${_recipes.length}',
+                            '${visibleRecipes.length}',
                             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                   color: AppTheme.seed,
                                 ),
                           ),
                         ],
                       ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 40,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: categoryTabs.length,
+                          separatorBuilder: (_, _) => const SizedBox(width: 8),
+                          itemBuilder: (context, index) {
+                            final category = categoryTabs[index];
+                            return ChoiceChip(
+                              label: Text(category),
+                              selected: _selectedCategory == category,
+                              onSelected: (_) {
+                                setState(() => _selectedCategory = category);
+                              },
+                            );
+                          },
+                        ),
+                      ),
                       const SizedBox(height: 12),
-                      if (_recipes.isEmpty)
+                      if (visibleRecipes.isEmpty)
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(28),
@@ -387,24 +430,26 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: AppTheme.seed.withValues(alpha: 0.12),
                             ),
                           ),
-                          child: const Column(
+                          child: Column(
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.restaurant_menu_rounded,
                                 size: 40,
                                 color: AppTheme.seedSoft,
                               ),
-                              SizedBox(height: 12),
+                              const SizedBox(height: 12),
                               Text(
-                                'Noch keine Rezepte gespeichert.\n'
-                                'Teile ein Video oder füge einen Link ein.',
+                                _recipes.isEmpty
+                                    ? 'Noch keine Rezepte gespeichert.\n'
+                                        'Teile ein Video oder füge einen Link ein.'
+                                    : 'In dieser Kategorie sind noch keine Rezepte.',
                                 textAlign: TextAlign.center,
                               ),
                             ],
                           ),
                         )
                       else
-                        ..._recipes.asMap().entries.map(
+                        ...visibleRecipes.asMap().entries.map(
                               (entry) => _RecipeCard(
                                 recipe: entry.value,
                                 tintIndex: entry.key,
@@ -742,6 +787,15 @@ class _RecipeCard extends StatelessWidget {
                                   '${recipe.sourceUrl.isEmpty ? '' : ' · Video'}',
                                   style: Theme.of(context).textTheme.bodyMedium,
                                 ),
+                                if (recipe.categories.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    recipe.categories.join(' · '),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
                               ],
                             ),
                           ),

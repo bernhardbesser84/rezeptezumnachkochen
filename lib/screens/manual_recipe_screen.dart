@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../services/recipe_category_service.dart';
 import '../services/app_repository.dart';
 import '../services/recipe_extractor.dart';
+import '../widgets/recipe_category_picker.dart';
 
 /// Rezept komplett selbst eintippen — funktioniert immer ohne API-Schlüssel.
 class ManualRecipeScreen extends StatefulWidget {
@@ -55,12 +57,27 @@ class _ManualRecipeScreenState extends State<ManualRecipeScreen> {
 
     setState(() => _saving = true);
     try {
-      final recipe = widget.extractor.buildManualRecipe(
+      var recipe = widget.extractor.buildManualRecipe(
         title: _title.text,
         ingredients: _lines(_ingredients.text),
         steps: _lines(_steps.text),
         servings: _servings.text,
       );
+      final existingRecipes =
+          await widget.repository.loadRecipes(pullRemote: false);
+      if (!mounted) return;
+      final selectedCategories = await showRecipeCategoryPicker(
+        context: context,
+        title: 'Kategorien für dieses Rezept',
+        initialSelection: recipe.categories,
+        suggestedCategories: RecipeCategoryService.suggestForRecipe(recipe),
+        existingCategories: RecipeCategoryService.collectFromRecipes(
+          existingRecipes,
+        ),
+      );
+      if (!mounted) return;
+      if (selectedCategories == null) return;
+      recipe = recipe.copyWith(categories: selectedCategories);
       await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {
         await widget.repository.addRecipeToShopping(recipe);

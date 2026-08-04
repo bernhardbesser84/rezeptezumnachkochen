@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 
 import '../models/recipe.dart';
 import '../services/app_repository.dart';
+import '../services/recipe_category_service.dart';
 import '../services/recipe_extractor.dart';
 import '../services/video_link_fetcher.dart';
 import '../theme/app_theme.dart';
+import '../widgets/recipe_category_picker.dart';
 
 /// Alle Rezeptfelder nachträglich ändern und speichern.
 class EditRecipeScreen extends StatefulWidget {
@@ -34,6 +36,7 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
   late final TextEditingController _steps;
   late final TextEditingController _notes;
   late final TextEditingController _sourceUrl;
+  List<String> _categories = const [];
   bool _saving = false;
   bool _retryingAi = false;
   String? _aiStatus;
@@ -51,6 +54,7 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
     _steps = TextEditingController(text: r.steps.join('\n'));
     _notes = TextEditingController(text: r.notes ?? '');
     _sourceUrl = TextEditingController(text: r.sourceUrl);
+    _categories = List<String>.from(r.categories);
     if (widget.autoStartAiRetry) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _retryAiEnrichment();
@@ -98,7 +102,27 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
       servings: servings.isEmpty ? null : servings,
       prepTimeMinutes: prep,
       notes: notes.isEmpty ? null : notes,
+      categories: _categories,
     );
+  }
+
+  Future<void> _pickCategories() async {
+    final existingRecipes =
+        await widget.repository.loadRecipes(pullRemote: false);
+    if (!mounted) return;
+    final selected = await showRecipeCategoryPicker(
+      context: context,
+      title: 'Kategorien bearbeiten',
+      initialSelection: _categories,
+      suggestedCategories: RecipeCategoryService.suggestForRecipe(
+        _recipeFromForm(),
+      ),
+      existingCategories: RecipeCategoryService.collectFromRecipes(
+        existingRecipes,
+      ),
+    );
+    if (!mounted || selected == null) return;
+    setState(() => _categories = selected);
   }
 
   Future<void> _save({Recipe? recipe, String successMessage = 'Rezept gespeichert.'}) async {
@@ -343,6 +367,16 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
               labelText: 'Video-Link (optional)',
               hintText: 'https://...',
             ),
+          ),
+          const SizedBox(height: 12),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Kategorien'),
+            subtitle: _categories.isEmpty
+                ? const Text('Noch keine Kategorie gewählt')
+                : Text(_categories.join(' · ')),
+            trailing: const Icon(Icons.edit_outlined),
+            onTap: busy ? null : _pickCategories,
           ),
           const SizedBox(height: 16),
           TextField(

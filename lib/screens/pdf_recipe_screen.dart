@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 
 import '../services/app_repository.dart';
 import '../services/pdf_text_reader.dart';
+import '../services/recipe_category_service.dart';
 import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
+import '../widgets/recipe_category_picker.dart';
 
 /// Rezept aus einer PDF-Datei erstellen (z. B. gespeicherte Web-Rezepte).
 class PdfRecipeScreen extends StatefulWidget {
@@ -180,7 +182,7 @@ class _PdfRecipeScreenState extends State<PdfRecipeScreen> {
 
     setState(() => _busy = true);
     try {
-      final recipe = widget.extractor.buildManualRecipe(
+      var recipe = widget.extractor.buildManualRecipe(
         title: _title.text.trim().isEmpty
             ? 'Rezept aus PDF'
             : _title.text,
@@ -190,6 +192,21 @@ class _PdfRecipeScreenState extends State<PdfRecipeScreen> {
             ? 'Aus PDF erfasst.'
             : 'Aus PDF erfasst ($_fileName).',
       );
+      final existingRecipes =
+          await widget.repository.loadRecipes(pullRemote: false);
+      if (!mounted) return;
+      final selectedCategories = await showRecipeCategoryPicker(
+        context: context,
+        title: 'Kategorien für dieses Rezept',
+        initialSelection: recipe.categories,
+        suggestedCategories: RecipeCategoryService.suggestForRecipe(recipe),
+        existingCategories: RecipeCategoryService.collectFromRecipes(
+          existingRecipes,
+        ),
+      );
+      if (!mounted) return;
+      if (selectedCategories == null) return;
+      recipe = recipe.copyWith(categories: selectedCategories);
       await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {
         await widget.repository.addRecipeToShopping(recipe);
