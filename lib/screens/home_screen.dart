@@ -318,7 +318,12 @@ class _HomeScreenState extends State<HomeScreen> {
         _selectedCategory == RecipeCategoryService.allRecipesLabel
             ? _recipes
             : _recipes
-                .where((recipe) => recipe.categories.contains(_selectedCategory))
+                .where(
+                  (recipe) => RecipeCategoryService.recipeHasCategory(
+                    recipe,
+                    _selectedCategory,
+                  ),
+                )
                 .toList();
 
     return Scaffold(

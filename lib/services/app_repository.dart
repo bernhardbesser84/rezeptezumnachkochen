@@ -32,28 +32,48 @@ class AppRepository {
   }
 
   Future<List<Recipe>> loadRecipes({bool pullRemote = true}) async {
+    final local = await storage.loadRecipes();
     final config = _cloud(await storage.loadFamilyConfig());
     if (pullRemote && config != null && config.hasEffectiveCloud) {
       try {
         final remote = await sync.pullRecipes(config);
         if (remote.isNotEmpty) {
-          await storage.saveRecipes(remote);
-          return remote;
+          // Wichtig: nicht einfach Cloud überschreiben — sonst gehen
+          // frisch gesetzte Kategorien / Bearbeitungen verloren.
+          final merged = _mergeRecipes(local, remote);
+          await storage.saveRecipes(merged);
+          return merged;
         }
       } catch (_) {
         // Offline oder Cloud-Fehler: lokale Daten weiter nutzen
       }
     }
-    return storage.loadRecipes();
+    return local;
   }
 
   Future<void> saveRecipe(Recipe recipe) async {
-    await storage.upsertRecipe(recipe);
+    final normalized = recipe.copyWith(
+      categories: RecipeCategoryService.normalizeAll(recipe.categories),
+    );
+    await storage.upsertRecipe(normalized);
+    await _rememberCategories(normalized.categories);
     final config = _cloud(await storage.loadFamilyConfig());
     if (config != null && config.hasEffectiveCloud) {
-      await sync.pushRecipe(config, recipe);
+      await sync.pushRecipe(config, normalized);
     }
     await _backupQuietly();
+  }
+
+  /// Neue Kategorien sofort im Katalog merken (für Filter-Chips).
+  Future<void> _rememberCategories(List<String> categories) async {
+    if (categories.isEmpty) return;
+    final known = await storage.loadKnownCategories();
+    final merged = RecipeCategoryService.normalizeAll([
+      ...known,
+      ...categories,
+    ]);
+    merged.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    await storage.saveKnownCategories(merged);
   }
 
   Future<void> deleteRecipe(String id) async {
@@ -334,15 +354,27 @@ class AppRepository {
   }
 
   List<Recipe> _mergeRecipes(List<Recipe> local, List<Recipe> remote) {
-    final map = <String, Recipe>{};
-    for (final recipe in [...remote, ...local]) {
-      final existing = map[recipe.id];
-      if (existing == null || recipe.createdAt.isAfter(existing.createdAt)) {
-        map[recipe.id] = recipe;
+    final localById = {for (final recipe in local) recipe.id: recipe};
+    final remoteById = {for (final recipe in remote) recipe.id: recipe};
+    final merged = <Recipe>[];
+    for (final id in {...localById.keys, ...remoteById.keys}) {
+      final localRecipe = localById[id];
+      final remoteRecipe = remoteById[id];
+      if (localRecipe == null) {
+        merged.add(remoteRecipe!);
+      } else if (remoteRecipe == null) {
+        merged.add(localRecipe);
+      } else {
+        merged.add(
+          RecipeCategoryService.mergeRecipes(
+            local: localRecipe,
+            remote: remoteRecipe,
+          ),
+        );
       }
     }
-    return map.values.toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return merged;
   }
 
   List<ShoppingItem> _mergeShopping(

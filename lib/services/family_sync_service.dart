@@ -45,11 +45,21 @@ class FamilySyncService {
 
   Future<void> pushRecipe(FamilyConfig config, Recipe recipe) async {
     if (!config.hasEffectiveCloud) return;
-    final response = await _client.post(
+    final payload = recipe.toCloud(familyCode: config.familyCode);
+    var response = await _client.post(
       _rest(config, 'recipes', query: {'on_conflict': 'id'}),
       headers: _headers(config, preferReturn: true),
-      body: jsonEncode(recipe.toCloud(familyCode: config.familyCode)),
+      body: jsonEncode(payload),
     );
+    // Alte Cloud-Tabellen ohne categories-Spalte: ohne Feld erneut versuchen.
+    if (_isMissingCategoriesColumn(response)) {
+      final fallback = Map<String, dynamic>.from(payload)..remove('categories');
+      response = await _client.post(
+        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
+        headers: _headers(config, preferReturn: true),
+        body: jsonEncode(fallback),
+      );
+    }
     _ensureOk(response, 'Rezept konnte nicht in die Cloud gespeichert werden.');
   }
 
@@ -144,13 +154,23 @@ class FamilySyncService {
     List<Recipe> recipes,
   ) async {
     if (!config.hasEffectiveCloud || recipes.isEmpty) return;
-    final response = await _client.post(
+    final payload =
+        recipes.map((r) => r.toCloud(familyCode: config.familyCode)).toList();
+    var response = await _client.post(
       _rest(config, 'recipes', query: {'on_conflict': 'id'}),
       headers: _headers(config),
-      body: jsonEncode(
-        recipes.map((r) => r.toCloud(familyCode: config.familyCode)).toList(),
-      ),
+      body: jsonEncode(payload),
     );
+    if (_isMissingCategoriesColumn(response)) {
+      final fallback = payload
+          .map((row) => Map<String, dynamic>.from(row)..remove('categories'))
+          .toList();
+      response = await _client.post(
+        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
+        headers: _headers(config),
+        body: jsonEncode(fallback),
+      );
+    }
     _ensureOk(response, 'Rezepte konnten nicht synchronisiert werden.');
   }
 
@@ -294,7 +314,20 @@ class FamilySyncService {
 
   void _ensureOk(http.Response response, String message) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('$message (${response.statusCode})');
+      final detail = response.body.trim();
+      final suffix = detail.isEmpty ? '' : ': $detail';
+      throw Exception('$message (${response.statusCode})$suffix');
     }
+  }
+
+  bool _isMissingCategoriesColumn(http.Response response) {
+    if (response.statusCode < 400) return false;
+    final body = response.body.toLowerCase();
+    final mentionsCategories = body.contains('categories');
+    return mentionsCategories &&
+        (body.contains('pgrst204') ||
+            body.contains('could not find') ||
+            body.contains('schema cache') ||
+            body.contains('column'));
   }
 }
