@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/meal_plan_entry.dart';
 import '../models/recipe.dart';
 import '../services/app_repository.dart';
+import '../services/recipe_category_service.dart';
 import '../theme/app_theme.dart';
 
 /// Wochen-Essensplan: pro Tag ein Rezept auswählen.
@@ -80,48 +81,19 @@ class _MealPlanScreenState extends State<MealPlanScreen> {
       return;
     }
 
+    final categories =
+        await widget.repository.loadCategories(pullRemote: false);
+    if (!mounted) return;
+
     final selected = await showModalBottomSheet<Recipe>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (context) {
-        return SafeArea(
-          child: SizedBox(
-            height: MediaQuery.of(context).size.height * 0.7,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                  child: Text(
-                    'Rezept für ${_weekdayNames[day.weekday - 1]}',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ),
-                Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                    itemCount: _recipes.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 4),
-                    itemBuilder: (context, index) {
-                      final recipe = _recipes[index];
-                      return ListTile(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        title: Text(recipe.title),
-                        subtitle: Text(
-                          '${recipe.ingredients.length} Zutaten',
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => Navigator.of(context).pop(recipe),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
+        return _MealPlanRecipePicker(
+          weekdayLabel: _weekdayNames[day.weekday - 1],
+          recipes: _recipes,
+          categories: categories,
         );
       },
     );
@@ -220,7 +192,7 @@ class _MealPlanScreenState extends State<MealPlanScreen> {
                       const SizedBox(height: 6),
                       Text(
                         plannedCount == 0
-                            ? 'Tippe auf einen Tag und wähle ein Rezept.'
+                            ? 'Tippe auf einen Tag, wähle eine Kategorie, dann ein Rezept.'
                             : '$plannedCount von 7 Tagen geplant',
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.9),
@@ -393,6 +365,216 @@ class _DayTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Zuerst Kategorie wählen, danach das Rezept.
+class _MealPlanRecipePicker extends StatefulWidget {
+  const _MealPlanRecipePicker({
+    required this.weekdayLabel,
+    required this.recipes,
+    required this.categories,
+  });
+
+  final String weekdayLabel;
+  final List<Recipe> recipes;
+  final List<String> categories;
+
+  static const uncategorizedLabel = 'Ohne Kategorie';
+
+  @override
+  State<_MealPlanRecipePicker> createState() => _MealPlanRecipePickerState();
+}
+
+class _MealPlanRecipePickerState extends State<_MealPlanRecipePicker> {
+  String? _selectedCategory;
+  bool _allowCategoryBrowse = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Ohne angelegte Kategorien direkt die Rezeptliste zeigen.
+    final hasCategories = widget.categories.isNotEmpty ||
+        RecipeCategoryService.collectFromRecipes(widget.recipes).isNotEmpty;
+    _allowCategoryBrowse = hasCategories;
+    if (!hasCategories) {
+      _selectedCategory = RecipeCategoryService.allRecipesLabel;
+    }
+  }
+
+  List<String> get _categoryOptions {
+    final fromRecipes =
+        RecipeCategoryService.collectFromRecipes(widget.recipes);
+    final merged = RecipeCategoryService.normalizeAll([
+      ...widget.categories,
+      ...fromRecipes,
+    ]);
+    merged.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    final uncategorizedCount =
+        widget.recipes.where((r) => r.categories.isEmpty).length;
+
+    return [
+      ...merged,
+      if (uncategorizedCount > 0) _MealPlanRecipePicker.uncategorizedLabel,
+      RecipeCategoryService.allRecipesLabel,
+    ];
+  }
+
+  List<Recipe> get _visibleRecipes {
+    final category = _selectedCategory;
+    if (category == null ||
+        category == RecipeCategoryService.allRecipesLabel) {
+      return widget.recipes;
+    }
+    if (category == _MealPlanRecipePicker.uncategorizedLabel) {
+      return widget.recipes.where((r) => r.categories.isEmpty).toList();
+    }
+    return widget.recipes
+        .where(
+          (r) => RecipeCategoryService.recipeHasCategory(r, category),
+        )
+        .toList();
+  }
+
+  int _countForCategory(String category) {
+    if (category == RecipeCategoryService.allRecipesLabel) {
+      return widget.recipes.length;
+    }
+    if (category == _MealPlanRecipePicker.uncategorizedLabel) {
+      return widget.recipes.where((r) => r.categories.isEmpty).length;
+    }
+    return RecipeCategoryService.countRecipesWithCategory(
+      widget.recipes,
+      category,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final showingRecipes = _selectedCategory != null;
+
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.7,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 20, 8),
+              child: Row(
+                children: [
+                  if (showingRecipes && _allowCategoryBrowse)
+                    IconButton(
+                      tooltip: 'Zurück zu Kategorien',
+                      onPressed: () => setState(() => _selectedCategory = null),
+                      icon: const Icon(Icons.arrow_back),
+                    )
+                  else
+                    const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          showingRecipes
+                              ? (_selectedCategory ==
+                                      RecipeCategoryService.allRecipesLabel
+                                  ? 'Rezept für ${widget.weekdayLabel}'
+                                  : _selectedCategory!)
+                              : 'Rezept für ${widget.weekdayLabel}',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          showingRecipes
+                              ? 'Rezept auswählen'
+                              : 'Zuerst eine Kategorie wählen',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: AppTheme.inkMuted,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: showingRecipes
+                  ? _buildRecipeList(context)
+                  : _buildCategoryList(context),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryList(BuildContext context) {
+    final options = _categoryOptions;
+
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+      itemCount: options.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
+      itemBuilder: (context, index) {
+        final category = options[index];
+        final count = _countForCategory(category);
+        return ListTile(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          leading: Icon(
+            category == RecipeCategoryService.allRecipesLabel
+                ? Icons.menu_book_outlined
+                : category == _MealPlanRecipePicker.uncategorizedLabel
+                    ? Icons.label_off_outlined
+                    : Icons.folder_outlined,
+            color: AppTheme.seed,
+          ),
+          title: Text(category),
+          subtitle: Text(count == 1 ? '1 Rezept' : '$count Rezepte'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => setState(() => _selectedCategory = category),
+        );
+      },
+    );
+  }
+
+  Widget _buildRecipeList(BuildContext context) {
+    final recipes = _visibleRecipes;
+    if (recipes.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('In dieser Kategorie gibt es noch keine Rezepte.'),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+      itemCount: recipes.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
+      itemBuilder: (context, index) {
+        final recipe = recipes[index];
+        return ListTile(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          title: Text(recipe.title),
+          subtitle: Text(
+            recipe.categories.isEmpty
+                ? '${recipe.ingredients.length} Zutaten'
+                : '${recipe.categories.join(' · ')} · '
+                    '${recipe.ingredients.length} Zutaten',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).pop(recipe),
+        );
+      },
     );
   }
 }
