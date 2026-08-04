@@ -22,7 +22,6 @@ import 'manage_categories_screen.dart';
 import 'recipe_detail_screen.dart';
 import 'settings_screen.dart';
 import 'shopping_list_screen.dart';
-import 'web_install_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -380,16 +379,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (PlatformHints.isWeb) ...[
                         const PwaUpdateBanner(),
                         const SizedBox(height: 14),
-                        _WebInstallBanner(
-                          onOpenHelp: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const WebInstallScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 14),
                       ],
                       _HeroBanner(onAdd: () => _openAddScreen()),
                       const SizedBox(height: 16),
@@ -489,44 +478,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
         ),
-      ),
-    );
-  }
-}
-
-class _WebInstallBanner extends StatelessWidget {
-  const _WebInstallBanner({required this.onOpenHelp});
-
-  final VoidCallback onOpenHelp;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.accentSoft,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppTheme.accent.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'iPhone ohne App Store',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Du kannst diese Web-App dauerhaft auf den Home-Bildschirm legen – '
-            'kostenlos, ohne Apple-Abo.',
-          ),
-          const SizedBox(height: 12),
-          FilledButton.tonal(
-            onPressed: onOpenHelp,
-            child: const Text('So füge ich sie hinzu'),
-          ),
-        ],
       ),
     );
   }
