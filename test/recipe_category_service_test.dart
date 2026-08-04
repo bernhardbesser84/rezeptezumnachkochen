@@ -44,4 +44,30 @@ void main() {
     expect(suggestions, contains('Pasta'));
     expect(suggestions, contains('Hähnchen'));
   });
+
+  test('Kategorie umbenennen und entfernen auf Rezept', () {
+    final recipe = Recipe(
+      id: '4',
+      title: 'Test',
+      ingredients: const ['Salz'],
+      steps: const ['Kochen'],
+      sourceUrl: '',
+      createdAt: DateTime.now(),
+      categories: const ['Pasta', 'Familie'],
+    );
+
+    final renamed = RecipeCategoryService.renameCategoryOnRecipe(
+      recipe: recipe,
+      oldName: 'Pasta',
+      newName: 'Nudeln',
+    );
+    expect(renamed.categories, containsAll(['Nudeln', 'Familie']));
+    expect(renamed.categories, isNot(contains('Pasta')));
+
+    final removed = RecipeCategoryService.removeCategoryFromRecipe(
+      recipe: renamed,
+      category: 'Familie',
+    );
+    expect(removed.categories, ['Nudeln']);
+  });
 }

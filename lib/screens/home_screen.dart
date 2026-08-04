@@ -18,6 +18,7 @@ import '../widgets/pwa_update_banner.dart';
 import 'add_recipe_screen.dart';
 import 'family_screen.dart';
 import 'meal_plan_screen.dart';
+import 'manage_categories_screen.dart';
 import 'recipe_detail_screen.dart';
 import 'settings_screen.dart';
 import 'shopping_list_screen.dart';
@@ -41,6 +42,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<Recipe> _recipes = [];
+  List<String> _knownCategories = [];
   bool _loading = true;
   bool _cloudReady = false;
   String? _familyCode;
@@ -69,10 +71,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final family = await widget.repository.family();
     final shopping = await widget.repository.loadShopping(pullRemote: true);
+    final categories =
+        await widget.repository.loadCategories(pullRemote: false);
     if (mounted) {
       setState(() {
         _recipes = recipes;
-        final categories = RecipeCategoryService.collectFromRecipes(recipes);
+        _knownCategories = categories;
         if (_selectedCategory != RecipeCategoryService.allRecipesLabel &&
             !categories.contains(_selectedCategory)) {
           _selectedCategory = RecipeCategoryService.allRecipesLabel;
@@ -188,10 +192,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final recipes = await widget.repository.loadRecipes(pullRemote: true);
     final family = await widget.repository.family();
     final shopping = await widget.repository.loadShopping(pullRemote: true);
+    final categories =
+        await widget.repository.loadCategories(pullRemote: false);
     if (mounted) {
       setState(() {
         _recipes = recipes;
-        final categories = RecipeCategoryService.collectFromRecipes(recipes);
+        _knownCategories = categories;
         if (_selectedCategory != RecipeCategoryService.allRecipesLabel &&
             !categories.contains(_selectedCategory)) {
           _selectedCategory = RecipeCategoryService.allRecipesLabel;
@@ -262,6 +268,16 @@ class _HomeScreenState extends State<HomeScreen> {
     await _reload();
   }
 
+  Future<void> _openManageCategories() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            ManageCategoriesScreen(repository: widget.repository),
+      ),
+    );
+    await _reload();
+  }
+
   Future<void> _openFamily() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -292,7 +308,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final allCategories = RecipeCategoryService.collectFromRecipes(_recipes);
+    final allCategories = _knownCategories.isEmpty
+        ? RecipeCategoryService.collectFromRecipes(_recipes)
+        : _knownCategories;
     final categoryTabs = [
       RecipeCategoryService.allRecipesLabel,
       ...allCategories,
@@ -391,6 +409,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                           const Spacer(),
+                          TextButton(
+                            onPressed: _openManageCategories,
+                            child: const Text('Kategorien'),
+                          ),
                           Text(
                             '${visibleRecipes.length}',
                             style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -404,9 +426,16 @@ class _HomeScreenState extends State<HomeScreen> {
                         height: 40,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
-                          itemCount: categoryTabs.length,
+                          itemCount: categoryTabs.length + 1,
                           separatorBuilder: (_, _) => const SizedBox(width: 8),
                           itemBuilder: (context, index) {
+                            if (index == categoryTabs.length) {
+                              return ActionChip(
+                                avatar: const Icon(Icons.settings_outlined, size: 18),
+                                label: const Text('Verwalten'),
+                                onPressed: _openManageCategories,
+                              );
+                            }
                             final category = categoryTabs[index];
                             return ChoiceChip(
                               label: Text(category),

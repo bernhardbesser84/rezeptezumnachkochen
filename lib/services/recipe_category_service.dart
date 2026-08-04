@@ -35,6 +35,52 @@ class RecipeCategoryService {
     return normalizeAll(all);
   }
 
+  /// Bekannte Kategorien + Kategorien aus Rezepten zusammenführen.
+  static List<String> mergeCatalog({
+    required List<String> known,
+    required List<Recipe> recipes,
+  }) {
+    final merged = normalizeAll([
+      ...known,
+      ...collectFromRecipes(recipes),
+    ]);
+    merged.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return merged;
+  }
+
+  static int countRecipesWithCategory(List<Recipe> recipes, String category) {
+    final target = normalizeOne(category);
+    if (target == null) return 0;
+    return recipes.where((r) => r.categories.contains(target)).length;
+  }
+
+  static Recipe renameCategoryOnRecipe({
+    required Recipe recipe,
+    required String oldName,
+    required String newName,
+  }) {
+    final from = normalizeOne(oldName);
+    final to = normalizeOne(newName);
+    if (from == null || to == null) return recipe;
+    if (!recipe.categories.contains(from)) return recipe;
+    final updated = recipe.categories
+        .map((c) => c == from ? to : c)
+        .toList();
+    return recipe.copyWith(categories: normalizeAll(updated));
+  }
+
+  static Recipe removeCategoryFromRecipe({
+    required Recipe recipe,
+    required String category,
+  }) {
+    final target = normalizeOne(category);
+    if (target == null) return recipe;
+    final updated =
+        recipe.categories.where((c) => c != target).toList(growable: false);
+    if (updated.length == recipe.categories.length) return recipe;
+    return recipe.copyWith(categories: updated);
+  }
+
   static List<String> suggestForRecipe(Recipe recipe) {
     final text = [
       recipe.title,

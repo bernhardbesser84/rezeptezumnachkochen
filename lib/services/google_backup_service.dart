@@ -129,6 +129,7 @@ class GoogleBackupService {
       recipes: await storage.loadRecipes(),
       shoppingItems: await storage.loadShoppingItems(),
       mealPlanEntries: await storage.loadMealPlanEntries(),
+      categories: await storage.loadKnownCategories(),
       familyConfig: await storage.loadFamilyConfig(),
       aiProvider: await storage.getAiProvider(),
       apiKeys: apiKeys,
@@ -140,6 +141,7 @@ class GoogleBackupService {
     await storage.saveRecipes(payload.recipes);
     await storage.saveShoppingItems(payload.shoppingItems);
     await storage.saveMealPlanEntries(payload.mealPlanEntries);
+    await storage.saveKnownCategories(payload.categories);
     if (payload.familyConfig != null) {
       await storage.saveFamilyConfig(payload.familyConfig!);
     }
