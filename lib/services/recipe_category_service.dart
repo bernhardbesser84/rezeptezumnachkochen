@@ -48,10 +48,39 @@ class RecipeCategoryService {
     return merged;
   }
 
+  static bool recipeHasCategory(Recipe recipe, String category) {
+    final target = normalizeOne(category);
+    if (target == null) return false;
+    return recipe.categories.any((c) => normalizeOne(c) == target);
+  }
+
   static int countRecipesWithCategory(List<Recipe> recipes, String category) {
     final target = normalizeOne(category);
     if (target == null) return 0;
-    return recipes.where((r) => r.categories.contains(target)).length;
+    return recipes.where((r) => recipeHasCategory(r, target)).length;
+  }
+
+  /// Lokal und Cloud zusammenführen.
+  /// Bei gleichem Erstelldatum gewinnt lokal (sonst gehen Bearbeitungen verloren).
+  /// Kategorien werden immer zusammengeführt, damit nichts verloren geht.
+  static Recipe mergeRecipes({
+    required Recipe local,
+    required Recipe remote,
+  }) {
+    final categories = normalizeAll([
+      ...local.categories,
+      ...remote.categories,
+    ]);
+
+    if (local.createdAt.isAfter(remote.createdAt)) {
+      return local.copyWith(categories: categories);
+    }
+    if (remote.createdAt.isAfter(local.createdAt)) {
+      // Cloud „älteres Rezept“, aber lokale Kategorien trotzdem behalten.
+      return remote.copyWith(categories: categories);
+    }
+    // Gleiches Datum: lokale Bearbeitung hat Vorrang (Titel, Zutaten, …).
+    return local.copyWith(categories: categories);
   }
 
   static Recipe renameCategoryOnRecipe({

@@ -150,6 +150,12 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
         SnackBar(content: Text(successMessage)),
       );
       Navigator.pop(context, draft);
+    } catch (e) {
+      if (!mounted) return;
+      final message = e.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Speichern fehlgeschlagen: $message')),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }

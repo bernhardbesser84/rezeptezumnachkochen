@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class Recipe {
   Recipe({
     required this.id,
@@ -22,6 +24,28 @@ class Recipe {
   final int? prepTimeMinutes;
   final String? notes;
   final List<String> categories;
+
+  /// Kategorien aus JSON/Cloud lesen (Liste oder JSON-Text).
+  static List<String> parseCategories(dynamic raw) {
+    if (raw == null) return const [];
+    if (raw is List) {
+      return raw
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+    }
+    if (raw is String) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) return const [];
+      try {
+        final decoded = jsonDecode(trimmed);
+        return parseCategories(decoded);
+      } catch (_) {
+        return [trimmed];
+      }
+    }
+    return const [];
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -52,9 +76,7 @@ class Recipe {
       servings: json['servings'] as String?,
       prepTimeMinutes: json['prepTimeMinutes'] as int?,
       notes: json['notes'] as String?,
-      categories: (json['categories'] as List<dynamic>? ?? const [])
-          .map((e) => e.toString())
-          .toList(),
+      categories: parseCategories(json['categories']),
     );
   }
 
@@ -74,9 +96,7 @@ class Recipe {
       servings: json['servings'] as String?,
       prepTimeMinutes: json['prep_time_minutes'] as int?,
       notes: json['notes'] as String?,
-      categories: (json['categories'] as List<dynamic>? ?? const [])
-          .map((e) => e.toString())
-          .toList(),
+      categories: parseCategories(json['categories']),
     );
   }
 

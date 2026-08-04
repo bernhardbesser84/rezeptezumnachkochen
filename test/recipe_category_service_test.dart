@@ -70,4 +70,87 @@ void main() {
     );
     expect(removed.categories, ['Nudeln']);
   });
+
+  test('Merge behält lokale Kategorien wenn Cloud leer ist', () {
+    final created = DateTime(2026, 1, 1);
+    final local = Recipe(
+      id: '5',
+      title: 'Lachs Pasta lokal',
+      ingredients: const ['Lachs'],
+      steps: const ['Braten'],
+      sourceUrl: '',
+      createdAt: created,
+      categories: const ['Pasta', 'Fisch & Meer'],
+    );
+    final remote = Recipe(
+      id: '5',
+      title: 'Lachs Pasta cloud',
+      ingredients: const ['Lachs'],
+      steps: const ['Braten'],
+      sourceUrl: '',
+      createdAt: created,
+      categories: const [],
+    );
+
+    final merged = RecipeCategoryService.mergeRecipes(
+      local: local,
+      remote: remote,
+    );
+    expect(merged.title, 'Lachs Pasta lokal');
+    expect(merged.categories, containsAll(['Pasta', 'Fisch & Meer']));
+  });
+
+  test('Merge vereinigt Kategorien aus lokal und Cloud', () {
+    final created = DateTime(2026, 1, 1);
+    final local = Recipe(
+      id: '6',
+      title: 'Lokal',
+      ingredients: const ['A'],
+      steps: const ['B'],
+      sourceUrl: '',
+      createdAt: created,
+      categories: const ['Pasta'],
+    );
+    final remote = Recipe(
+      id: '6',
+      title: 'Cloud',
+      ingredients: const ['A'],
+      steps: const ['B'],
+      sourceUrl: '',
+      createdAt: created,
+      categories: const ['Familie'],
+    );
+
+    final merged = RecipeCategoryService.mergeRecipes(
+      local: local,
+      remote: remote,
+    );
+    expect(merged.categories, containsAll(['Pasta', 'Familie']));
+  });
+
+  test('recipeHasCategory ist schreibweisen-tolerant', () {
+    final recipe = Recipe(
+      id: '7',
+      title: 'Test',
+      ingredients: const ['A'],
+      steps: const ['B'],
+      sourceUrl: '',
+      createdAt: DateTime.now(),
+      categories: const ['pasta'],
+    );
+    expect(RecipeCategoryService.recipeHasCategory(recipe, 'Pasta'), isTrue);
+    expect(RecipeCategoryService.recipeHasCategory(recipe, 'Reis'), isFalse);
+  });
+
+  test('parseCategories liest Liste und JSON-Text', () {
+    expect(Recipe.parseCategories(['Pasta', ' Fisch & Meer ']), [
+      'Pasta',
+      'Fisch & Meer',
+    ]);
+    expect(Recipe.parseCategories('["One Pot","Salat"]'), [
+      'One Pot',
+      'Salat',
+    ]);
+    expect(Recipe.parseCategories(null), isEmpty);
+  });
 }

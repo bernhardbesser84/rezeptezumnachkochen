@@ -111,27 +111,36 @@ Future<List<String>?> showRecipeCategoryPicker({
                       ],
                     ),
                     const SizedBox(height: 10),
-                    if (known.isNotEmpty)
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final category in known)
-                            FilterChip(
-                              label: Text(category),
-                              selected: selected.contains(category),
-                              onSelected: (isSelected) {
-                                setModalState(() {
-                                  if (isSelected) {
-                                    selected.add(category);
-                                  } else {
-                                    selected.remove(category);
-                                  }
-                                });
-                              },
-                            ),
-                        ],
-                      ),
+                    Builder(
+                      builder: (context) {
+                        final ownCategories = known
+                            .where((c) => !suggestions.contains(c))
+                            .toList();
+                        if (ownCategories.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        return Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final category in ownCategories)
+                              FilterChip(
+                                label: Text(category),
+                                selected: selected.contains(category),
+                                onSelected: (isSelected) {
+                                  setModalState(() {
+                                    if (isSelected) {
+                                      selected.add(category);
+                                    } else {
+                                      selected.remove(category);
+                                    }
+                                  });
+                                },
+                              ),
+                          ],
+                        );
+                      },
+                    ),
                     const SizedBox(height: 18),
                     Row(
                       children: [
