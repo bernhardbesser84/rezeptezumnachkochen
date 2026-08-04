@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/app_repository.dart';
+import '../services/recipe_category_service.dart';
 import '../services/recipe_extractor.dart';
+import '../widgets/recipe_category_picker.dart';
 
 /// Rezept aus einem oder mehreren Fotos/Screenshots erstellen.
 ///
@@ -221,7 +223,7 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
 
     setState(() => _busy = true);
     try {
-      final recipe = widget.extractor.buildManualRecipe(
+      var recipe = widget.extractor.buildManualRecipe(
         title: _title.text.trim().isEmpty
             ? 'Rezept aus Fotos'
             : _title.text,
@@ -231,6 +233,21 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
             ? 'Aus Foto erfasst.'
             : 'Aus ${_images.length} Fotos/Screenshots erfasst.',
       );
+      final existingRecipes =
+          await widget.repository.loadRecipes(pullRemote: false);
+      if (!mounted) return;
+      final selectedCategories = await showRecipeCategoryPicker(
+        context: context,
+        title: 'Kategorien für dieses Rezept',
+        initialSelection: recipe.categories,
+        suggestedCategories: RecipeCategoryService.suggestForRecipe(recipe),
+        existingCategories: RecipeCategoryService.collectFromRecipes(
+          existingRecipes,
+        ),
+      );
+      if (!mounted) return;
+      if (selectedCategories == null) return;
+      recipe = recipe.copyWith(categories: selectedCategories);
       await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {
         await widget.repository.addRecipeToShopping(recipe);

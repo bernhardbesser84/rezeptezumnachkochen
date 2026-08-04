@@ -11,8 +11,10 @@ create table if not exists recipes (
   created_at timestamptz not null default now(),
   servings text,
   prep_time_minutes int,
-  notes text
+  notes text,
+  categories jsonb not null default '[]'::jsonb
 );
+alter table recipes add column if not exists categories jsonb not null default '[]'::jsonb;
 
 create table if not exists shopping_items (
   id text primary key,

@@ -5,11 +5,13 @@ import 'package:image_picker/image_picker.dart';
 
 import '../services/app_repository.dart';
 import '../services/caption_fetcher.dart';
+import '../services/recipe_category_service.dart';
 import '../services/recipe_extractor.dart';
 import '../services/video_link_fetcher.dart';
 import '../services/youtube_caption.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
+import '../widgets/recipe_category_picker.dart';
 import 'manual_recipe_screen.dart';
 import 'pdf_recipe_screen.dart';
 import 'photo_recipe_screen.dart';
@@ -417,7 +419,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
       final urlMatch = RegExp(r'https?://[^\s]+').firstMatch(linkOrText);
       final url = urlMatch?.group(0);
 
-      final recipe = await widget.extractor.extractRecipe(
+      var recipe = await widget.extractor.extractRecipe(
         sourceText: linkOrText,
         sourceUrl: url,
         captionText: caption,
@@ -428,6 +430,22 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         videoMimeType: _videoMimeType,
         videoFileName: _videoName,
       );
+
+      final existingRecipes =
+          await widget.repository.loadRecipes(pullRemote: false);
+      if (!mounted) return;
+      final selectedCategories = await showRecipeCategoryPicker(
+        context: context,
+        title: 'Kategorien für dieses Rezept',
+        initialSelection: recipe.categories,
+        suggestedCategories: RecipeCategoryService.suggestForRecipe(recipe),
+        existingCategories: RecipeCategoryService.collectFromRecipes(
+          existingRecipes,
+        ),
+      );
+      if (!mounted) return;
+      if (selectedCategories == null) return;
+      recipe = recipe.copyWith(categories: selectedCategories);
 
       await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {

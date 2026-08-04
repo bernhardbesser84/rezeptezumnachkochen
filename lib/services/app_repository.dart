@@ -5,6 +5,7 @@ import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 import 'family_sync_service.dart';
 import 'google_backup_service.dart';
+import 'recipe_category_service.dart';
 import 'recipe_storage.dart';
 
 /// Verbindet lokales Speichern und optionalen Cloud-Sync für die Familie.
@@ -62,6 +63,106 @@ class AppRepository {
       await sync.deleteRecipe(config, id);
     }
     await _backupQuietly();
+  }
+
+  /// Alle bekannten Kategorien (gespeicherte + aus Rezepten).
+  Future<List<String>> loadCategories({bool pullRemote = false}) async {
+    final recipes = await loadRecipes(pullRemote: pullRemote);
+    final known = await storage.loadKnownCategories();
+    final merged = RecipeCategoryService.mergeCatalog(
+      known: known,
+      recipes: recipes,
+    );
+    // Katalog aktuell halten (neue Kategorien aus Rezepten übernehmen).
+    await storage.saveKnownCategories(merged);
+    return merged;
+  }
+
+  Future<void> createCategory(String name) async {
+    final normalized = RecipeCategoryService.normalizeOne(name);
+    if (normalized == null) {
+      throw Exception('Bitte einen gültigen Kategorienamen eingeben.');
+    }
+    if (normalized == RecipeCategoryService.allRecipesLabel) {
+      throw Exception('„Alle Rezepte“ ist fest und kann nicht angelegt werden.');
+    }
+    final categories = await loadCategories(pullRemote: false);
+    if (categories.any((c) => c.toLowerCase() == normalized.toLowerCase())) {
+      throw Exception('Diese Kategorie gibt es schon.');
+    }
+    await storage.saveKnownCategories([...categories, normalized]..sort(
+          (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
+        ));
+    await _backupQuietly();
+  }
+
+  Future<int> renameCategory({
+    required String oldName,
+    required String newName,
+  }) async {
+    final from = RecipeCategoryService.normalizeOne(oldName);
+    final to = RecipeCategoryService.normalizeOne(newName);
+    if (from == null || to == null) {
+      throw Exception('Bitte einen gültigen Kategorienamen eingeben.');
+    }
+    if (from == to) return 0;
+
+    final categories = await loadCategories(pullRemote: false);
+    if (!categories.contains(from)) {
+      throw Exception('Kategorie wurde nicht gefunden.');
+    }
+    if (categories.any((c) => c != from && c.toLowerCase() == to.toLowerCase())) {
+      throw Exception('Der neue Name ist schon vergeben.');
+    }
+
+    final recipes = await storage.loadRecipes();
+    var changed = 0;
+    for (final recipe in recipes) {
+      final updated = RecipeCategoryService.renameCategoryOnRecipe(
+        recipe: recipe,
+        oldName: from,
+        newName: to,
+      );
+      if (updated.categories.join('|') != recipe.categories.join('|')) {
+        await saveRecipe(updated);
+        changed++;
+      }
+    }
+
+    final next = categories.map((c) => c == from ? to : c).toList();
+    await storage.saveKnownCategories(
+      RecipeCategoryService.normalizeAll(next)
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
+    );
+    await _backupQuietly();
+    return changed;
+  }
+
+  Future<int> deleteCategory(String name) async {
+    final target = RecipeCategoryService.normalizeOne(name);
+    if (target == null) {
+      throw Exception('Bitte eine Kategorie auswählen.');
+    }
+
+    final recipes = await storage.loadRecipes();
+    var changed = 0;
+    for (final recipe in recipes) {
+      final updated = RecipeCategoryService.removeCategoryFromRecipe(
+        recipe: recipe,
+        category: target,
+      );
+      if (updated.categories.length != recipe.categories.length) {
+        await saveRecipe(updated);
+        changed++;
+      }
+    }
+
+    final categories = await loadCategories(pullRemote: false);
+    await storage.saveKnownCategories(
+      categories.where((c) => c != target).toList(),
+    );
+    await _backupQuietly();
+    return changed;
   }
 
   Future<List<ShoppingItem>> loadShopping({bool pullRemote = true}) async {

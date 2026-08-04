@@ -9,6 +9,7 @@ class Recipe {
     this.servings,
     this.prepTimeMinutes,
     this.notes,
+    this.categories = const [],
   });
 
   final String id;
@@ -20,6 +21,7 @@ class Recipe {
   final String? servings;
   final int? prepTimeMinutes;
   final String? notes;
+  final List<String> categories;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -31,6 +33,7 @@ class Recipe {
         'servings': servings,
         'prepTimeMinutes': prepTimeMinutes,
         'notes': notes,
+        'categories': categories,
       };
 
   factory Recipe.fromJson(Map<String, dynamic> json) {
@@ -49,6 +52,9 @@ class Recipe {
       servings: json['servings'] as String?,
       prepTimeMinutes: json['prepTimeMinutes'] as int?,
       notes: json['notes'] as String?,
+      categories: (json['categories'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
     );
   }
 
@@ -68,6 +74,9 @@ class Recipe {
       servings: json['servings'] as String?,
       prepTimeMinutes: json['prep_time_minutes'] as int?,
       notes: json['notes'] as String?,
+      categories: (json['categories'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
     );
   }
 
@@ -82,6 +91,7 @@ class Recipe {
         'servings': servings,
         'prep_time_minutes': prepTimeMinutes,
         'notes': notes,
+        'categories': categories,
       };
 
   Recipe copyWith({
@@ -94,6 +104,7 @@ class Recipe {
     String? servings,
     int? prepTimeMinutes,
     String? notes,
+    List<String>? categories,
     bool clearNotes = false,
   }) {
     return Recipe(
@@ -106,6 +117,7 @@ class Recipe {
       servings: servings ?? this.servings,
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
       notes: clearNotes ? null : (notes ?? this.notes),
+      categories: categories ?? this.categories,
     );
   }
 

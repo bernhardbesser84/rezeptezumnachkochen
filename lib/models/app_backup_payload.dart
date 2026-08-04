@@ -16,8 +16,9 @@ class AppBackupPayload {
     required this.apiKeys,
     required this.demoSeeded,
     this.mealPlanEntries = const [],
+    this.categories = const [],
     this.familyConfig,
-    this.version = 2,
+    this.version = 3,
   });
 
   final int version;
@@ -25,6 +26,7 @@ class AppBackupPayload {
   final List<Recipe> recipes;
   final List<ShoppingItem> shoppingItems;
   final List<MealPlanEntry> mealPlanEntries;
+  final List<String> categories;
   final FamilyConfig? familyConfig;
   final AiProvider aiProvider;
   final Map<String, String> apiKeys;
@@ -36,6 +38,7 @@ class AppBackupPayload {
         'recipes': recipes.map((r) => r.toJson()).toList(),
         'shoppingItems': shoppingItems.map((e) => e.toJson()).toList(),
         'mealPlanEntries': mealPlanEntries.map((e) => e.toJson()).toList(),
+        'categories': categories,
         'familyConfig': familyConfig?.toJson(),
         'aiProvider': aiProvider.storageValue,
         'apiKeys': apiKeys,
@@ -69,6 +72,10 @@ class AppBackupPayload {
       mealPlanEntries: (json['mealPlanEntries'] as List? ?? [])
           .whereType<Map>()
           .map((e) => MealPlanEntry.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      categories: (json['categories'] as List? ?? [])
+          .map((e) => e.toString())
+          .where((e) => e.trim().isNotEmpty)
           .toList(),
       familyConfig: json['familyConfig'] is Map
           ? FamilyConfig.fromJson(

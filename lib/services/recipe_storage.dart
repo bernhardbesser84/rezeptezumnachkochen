@@ -16,6 +16,7 @@ class RecipeStorage {
   static const _recipesKey = 'saved_recipes';
   static const _shoppingKey = 'shopping_items';
   static const _mealPlanKey = 'meal_plan_entries';
+  static const _categoriesKey = 'recipe_categories';
   static const _familyKey = 'family_config';
   static const _seededKey = 'demo_seeded';
   static const _aiProviderKey = 'ai_provider';
@@ -214,6 +215,22 @@ class RecipeStorage {
     final removed = entries.removeAt(index);
     await saveMealPlanEntries(entries);
     return removed;
+  }
+
+  Future<List<String>> loadKnownCategories() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_categoriesKey);
+    if (raw == null || raw.isEmpty) return [];
+    final list = jsonDecode(raw) as List<dynamic>;
+    return list
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  Future<void> saveKnownCategories(List<String> categories) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_categoriesKey, jsonEncode(categories));
   }
 
   Future<FamilyConfig?> loadFamilyConfig() async {
