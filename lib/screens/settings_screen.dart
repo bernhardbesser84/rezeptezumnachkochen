@@ -11,6 +11,7 @@ import '../utils/clipboard_paste.dart';
 import '../utils/pwa_update.dart';
 import 'family_screen.dart';
 import 'google_backup_screen.dart';
+import 'web_install_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -195,6 +196,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     },
                   ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.phone_iphone_outlined),
+                  title: const Text('iPhone ohne App Store'),
+                  subtitle: const Text(
+                    'Web-App dauerhaft auf den Home-Bildschirm legen',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const WebInstallScreen(),
+                      ),
+                    );
+                  },
+                ),
                 const Divider(height: 32),
                 const Text(
                   'Einkaufsliste',
