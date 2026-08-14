@@ -18,6 +18,10 @@ class FamilySyncService {
 
   FamilyConfig _cfg(FamilyConfig config) => config.withEffectiveCloud();
 
+  /// Spalten, die in der Live-Cloud noch fehlen (z. B. image_url).
+  /// Nach dem ersten Fehler nicht mehr mitsenden, damit Speichern klappt.
+  final Set<String> _omittedRecipeColumns = <String>{};
+
   Uri _rest(
     FamilyConfig config,
     String table, {
@@ -45,28 +49,11 @@ class FamilySyncService {
 
   Future<void> pushRecipe(FamilyConfig config, Recipe recipe) async {
     if (!config.hasEffectiveCloud) return;
-    final payload = recipe.toCloud(familyCode: config.familyCode);
-    var response = await _client.post(
-      _rest(config, 'recipes', query: {'on_conflict': 'id'}),
-      headers: _headers(config, preferReturn: true),
-      body: jsonEncode(payload),
+    final response = await _upsertRecipes(
+      config,
+      recipe.toCloud(familyCode: config.familyCode),
+      preferReturn: true,
     );
-    if (_isMissingRecipeColumn(response, 'image_url')) {
-      payload.remove('image_url');
-      response = await _client.post(
-        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
-        headers: _headers(config, preferReturn: true),
-        body: jsonEncode(payload),
-      );
-    }
-    if (_isMissingRecipeColumn(response, 'categories')) {
-      final fallback = Map<String, dynamic>.from(payload)..remove('categories');
-      response = await _client.post(
-        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
-        headers: _headers(config, preferReturn: true),
-        body: jsonEncode(fallback),
-      );
-    }
     _ensureOk(response, 'Rezept konnte nicht in die Cloud gespeichert werden.');
   }
 
@@ -163,33 +150,11 @@ class FamilySyncService {
     if (!config.hasEffectiveCloud || recipes.isEmpty) return;
     final payload =
         recipes.map((r) => r.toCloud(familyCode: config.familyCode)).toList();
-    var response = await _client.post(
-      _rest(config, 'recipes', query: {'on_conflict': 'id'}),
-      headers: _headers(config),
-      body: jsonEncode(payload),
+    final response = await _upsertRecipes(
+      config,
+      payload,
+      preferReturn: false,
     );
-    if (_isMissingRecipeColumn(response, 'image_url')) {
-      final stripped = payload
-          .map((row) => Map<String, dynamic>.from(row)..remove('image_url'))
-          .toList();
-      response = await _client.post(
-        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
-        headers: _headers(config),
-        body: jsonEncode(stripped),
-      );
-    }
-    if (_isMissingRecipeColumn(response, 'categories')) {
-      final fallback = payload
-          .map((row) => Map<String, dynamic>.from(row)
-            ..remove('categories')
-            ..remove('image_url'))
-          .toList();
-      response = await _client.post(
-        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
-        headers: _headers(config),
-        body: jsonEncode(fallback),
-      );
-    }
     _ensureOk(response, 'Rezepte konnten nicht synchronisiert werden.');
   }
 
@@ -339,14 +304,87 @@ class FamilySyncService {
     }
   }
 
-  bool _isMissingRecipeColumn(http.Response response, String column) {
-    if (response.statusCode < 400) return false;
+  /// Cloud-Fehler, die das lokale Speichern nicht blockieren sollen.
+  /// Typisch: neue Spalte (Vorschaubild) fehlt noch in Supabase.
+  static bool isIgnorableSchemaError(Object error) {
+    return _looksLikeMissingColumn(error.toString());
+  }
+
+  Future<http.Response> _upsertRecipes(
+    FamilyConfig config,
+    Object payload, {
+    required bool preferReturn,
+  }) async {
+    Object current = _stripOmittedColumns(payload);
+    var response = await _client.post(
+      _rest(config, 'recipes', query: {'on_conflict': 'id'}),
+      headers: _headers(config, preferReturn: preferReturn),
+      body: jsonEncode(current),
+    );
+
+    for (var i = 0; i < 6; i++) {
+      final missing = _missingRecipeColumn(response);
+      if (missing == null || _omittedRecipeColumns.contains(missing)) {
+        break;
+      }
+      _omittedRecipeColumns.add(missing);
+      current = _stripOmittedColumns(payload);
+      response = await _client.post(
+        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
+        headers: _headers(config, preferReturn: preferReturn),
+        body: jsonEncode(current),
+      );
+    }
+    return response;
+  }
+
+  Object _stripOmittedColumns(Object payload) {
+    Map<String, dynamic> stripRow(Map<dynamic, dynamic> row) {
+      final copy = Map<String, dynamic>.from(row);
+      for (final column in _omittedRecipeColumns) {
+        copy.remove(column);
+      }
+      return copy;
+    }
+
+    if (payload is List) {
+      return payload
+          .map((row) => stripRow(Map<dynamic, dynamic>.from(row as Map)))
+          .toList();
+    }
+    return stripRow(Map<dynamic, dynamic>.from(payload as Map));
+  }
+
+  String? _missingRecipeColumn(http.Response response) {
+    if (response.statusCode < 400) return null;
     final body = response.body.toLowerCase();
-    final mentions = body.contains(column.toLowerCase());
-    return mentions &&
-        (body.contains('pgrst204') ||
-            body.contains('could not find') ||
-            body.contains('schema cache') ||
-            body.contains('column'));
+    if (!_looksLikeMissingColumn(body)) return null;
+
+    final quoted = RegExp(
+      "could not find the ['\"]([a-z0-9_]+)['\"] column",
+    ).firstMatch(body);
+    if (quoted != null) return quoted.group(1);
+
+    final pg = RegExp(r'column recipes\.([a-z0-9_]+)').firstMatch(body);
+    if (pg != null) return pg.group(1);
+
+    for (final column in const ['image_url', 'categories']) {
+      if (body.contains(column) && !_omittedRecipeColumns.contains(column)) {
+        return column;
+      }
+    }
+    for (final column in const ['image_url', 'categories']) {
+      if (!_omittedRecipeColumns.contains(column)) return column;
+    }
+    return null;
+  }
+
+  static bool _looksLikeMissingColumn(String text) {
+    final body = text.toLowerCase();
+    return body.contains('pgrst204') ||
+        body.contains('42703') ||
+        body.contains('schema cache') ||
+        (body.contains('could not find') && body.contains('column')) ||
+        (body.contains('does not exist') && body.contains('column'));
   }
 }
