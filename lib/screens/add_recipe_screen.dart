@@ -57,6 +57,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
   Uint8List? _videoBytes;
   String? _videoMimeType;
   String? _videoName;
+  String? _linkImageUrl;
 
   @override
   void initState() {
@@ -230,6 +231,9 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
             '${result.title.isNotEmpty ? ' (${result.title})' : ''}. '
             'Bitte kurz prüfen, dann Anleitung erstellen.';
         _error = null;
+        if (result.imageUrl != null && result.imageUrl!.trim().isNotEmpty) {
+          _linkImageUrl = result.imageUrl!.trim();
+        }
       });
 
       // Facebook/YouTube: Zubereitung oft gesprochen → Video vom Link nachladen.
@@ -446,6 +450,12 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
       if (!mounted) return;
       if (selectedCategories == null) return;
       recipe = recipe.copyWith(categories: selectedCategories);
+      final cover = recipe.imageUrl?.trim();
+      if ((cover == null || cover.isEmpty) &&
+          _linkImageUrl != null &&
+          _linkImageUrl!.trim().isNotEmpty) {
+        recipe = recipe.copyWith(imageUrl: _linkImageUrl!.trim());
+      }
 
       await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {

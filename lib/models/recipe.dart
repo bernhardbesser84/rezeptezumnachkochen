@@ -12,6 +12,7 @@ class Recipe {
     this.prepTimeMinutes,
     this.notes,
     this.categories = const [],
+    this.imageUrl,
   });
 
   final String id;
@@ -24,6 +25,7 @@ class Recipe {
   final int? prepTimeMinutes;
   final String? notes;
   final List<String> categories;
+  final String? imageUrl;
 
   /// Kategorien aus JSON/Cloud lesen (Liste oder JSON-Text).
   static List<String> parseCategories(dynamic raw) {
@@ -58,6 +60,7 @@ class Recipe {
         'prepTimeMinutes': prepTimeMinutes,
         'notes': notes,
         'categories': categories,
+        'imageUrl': imageUrl,
       };
 
   factory Recipe.fromJson(Map<String, dynamic> json) {
@@ -77,6 +80,7 @@ class Recipe {
       prepTimeMinutes: json['prepTimeMinutes'] as int?,
       notes: json['notes'] as String?,
       categories: parseCategories(json['categories']),
+      imageUrl: _parseImageUrl(json['imageUrl'] ?? json['image_url']),
     );
   }
 
@@ -97,6 +101,7 @@ class Recipe {
       prepTimeMinutes: json['prep_time_minutes'] as int?,
       notes: json['notes'] as String?,
       categories: parseCategories(json['categories']),
+      imageUrl: _parseImageUrl(json['image_url'] ?? json['imageUrl']),
     );
   }
 
@@ -112,6 +117,7 @@ class Recipe {
         'prep_time_minutes': prepTimeMinutes,
         'notes': notes,
         'categories': categories,
+        'image_url': imageUrl,
       };
 
   Recipe copyWith({
@@ -125,6 +131,7 @@ class Recipe {
     int? prepTimeMinutes,
     String? notes,
     List<String>? categories,
+    String? imageUrl,
     bool clearNotes = false,
   }) {
     return Recipe(
@@ -138,7 +145,13 @@ class Recipe {
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
       notes: clearNotes ? null : (notes ?? this.notes),
       categories: categories ?? this.categories,
+      imageUrl: imageUrl ?? this.imageUrl,
     );
+  }
+
+  static String? _parseImageUrl(dynamic raw) {
+    final value = raw?.toString().trim() ?? '';
+    return value.isEmpty ? null : value;
   }
 
   /// True, wenn die KI-Auswertung fehlgeschlagen/fehlt und nachgeholt werden kann.

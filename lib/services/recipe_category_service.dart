@@ -73,14 +73,27 @@ class RecipeCategoryService {
     ]);
 
     if (local.createdAt.isAfter(remote.createdAt)) {
-      return local.copyWith(categories: categories);
+      return local.copyWith(
+        categories: categories,
+        imageUrl: _preferImage(local.imageUrl, remote.imageUrl),
+      );
     }
     if (remote.createdAt.isAfter(local.createdAt)) {
-      // Cloud „älteres Rezept“, aber lokale Kategorien trotzdem behalten.
-      return remote.copyWith(categories: categories);
+      return remote.copyWith(
+        categories: categories,
+        imageUrl: _preferImage(local.imageUrl, remote.imageUrl),
+      );
     }
-    // Gleiches Datum: lokale Bearbeitung hat Vorrang (Titel, Zutaten, …).
-    return local.copyWith(categories: categories);
+    return local.copyWith(
+      categories: categories,
+      imageUrl: _preferImage(local.imageUrl, remote.imageUrl),
+    );
+  }
+
+  static String? _preferImage(String? a, String? b) {
+    if (a != null && a.trim().isNotEmpty) return a;
+    if (b != null && b.trim().isNotEmpty) return b;
+    return a ?? b;
   }
 
   static Recipe renameCategoryOnRecipe({

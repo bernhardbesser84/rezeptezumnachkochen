@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -247,7 +249,10 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
       );
       if (!mounted) return;
       if (selectedCategories == null) return;
-      recipe = recipe.copyWith(categories: selectedCategories);
+      recipe = recipe.copyWith(
+        categories: selectedCategories,
+        imageUrl: _coverFromFirstPhoto(),
+      );
       await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {
         await widget.repository.addRecipeToShopping(recipe);
@@ -257,6 +262,13 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  String? _coverFromFirstPhoto() {
+    if (_images.isEmpty) return null;
+    final first = _images.first;
+    if (first.bytes.isEmpty || first.bytes.length > 180000) return null;
+    return 'data:${first.mimeType};base64,${base64Encode(first.bytes)}';
   }
 
   @override

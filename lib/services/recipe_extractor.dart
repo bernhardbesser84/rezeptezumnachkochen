@@ -9,17 +9,20 @@ import '../models/recipe.dart';
 import 'media_transcript.dart';
 import 'pdf_text_normalizer.dart';
 import 'pdf_text_reader.dart';
+import 'youtube_caption.dart';
 
 class PagePreview {
   PagePreview({
     required this.url,
     required this.title,
     required this.description,
+    this.imageUrl = '',
   });
 
   final String url;
   final String title;
   final String description;
+  final String imageUrl;
 }
 
 /// Ein Rezept-Foto für die KI-Auswertung.
@@ -106,13 +109,26 @@ class RecipeExtractor {
           _metaContent(html, 'og:url'),
           url,
         ]);
+        var image = _firstNonEmpty([
+          _metaContent(html, 'og:image'),
+          _metaContent(html, 'og:image:url'),
+          _metaContent(html, 'og:image:secure_url'),
+          _metaName(html, 'twitter:image'),
+        ]);
+        if (image.isEmpty && isYoutubeUrl(url)) {
+          final id = youtubeVideoId(url);
+          if (id != null) {
+            image = 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+          }
+        }
 
-        if (title.isEmpty && description.isEmpty) continue;
+        if (title.isEmpty && description.isEmpty && image.isEmpty) continue;
 
         return PagePreview(
           url: canonical.isNotEmpty ? canonical : url,
           title: title,
           description: description,
+          imageUrl: image,
         );
       } catch (_) {
         // Nächsten User-Agent versuchen.
@@ -280,39 +296,51 @@ class RecipeExtractor {
           sourceUrl: url,
         );
 
+    Recipe attachCover(Recipe recipe) {
+      final image = preview.imageUrl.trim();
+      if (image.isEmpty) return recipe;
+      return recipe.copyWith(imageUrl: image);
+    }
+
     if (!useAi || apiKey == null || apiKey.trim().isEmpty) {
-      return local();
+      return attachCover(local());
     }
 
     try {
       // Gemini: Video direkt mitschicken (sieht + hört mit).
       if (hasVideo && provider == AiProvider.gemini) {
-        return await _extractWithGeminiVideo(
-          combinedText: combinedForAi,
-          sourceUrl: url,
-          apiKey: apiKey.trim(),
-          videoBytes: videoBytes,
-          videoMimeType: videoMimeType ?? 'video/mp4',
+        return attachCover(
+          await _extractWithGeminiVideo(
+            combinedText: combinedForAi,
+            sourceUrl: url,
+            apiKey: apiKey.trim(),
+            videoBytes: videoBytes,
+            videoMimeType: videoMimeType ?? 'video/mp4',
+          ),
         );
       }
 
-      return await _extractWithAi(
-        provider: provider,
-        combinedText: combinedForAi,
-        sourceUrl: url,
-        apiKey: apiKey.trim(),
+      return attachCover(
+        await _extractWithAi(
+          provider: provider,
+          combinedText: combinedForAi,
+          sourceUrl: url,
+          apiKey: apiKey.trim(),
+        ),
       );
     } catch (e) {
       final fallback = local();
       final reason = e.toString().replaceFirst('Exception: ', '');
-      return fallback.copyWith(
-        notes: [
-          'KI war gerade nicht nutzbar ($reason).',
-          'Deshalb wurde eine einfache Auswertung ohne KI erstellt.',
-          'Du kannst Zutaten und Schritte danach selbst ergänzen.',
-          if (fallback.notes != null && fallback.notes!.isNotEmpty)
-            fallback.notes!,
-        ].join('\n'),
+      return attachCover(
+        fallback.copyWith(
+          notes: [
+            'KI war gerade nicht nutzbar ($reason).',
+            'Deshalb wurde eine einfache Auswertung ohne KI erstellt.',
+            'Du kannst Zutaten und Schritte danach selbst ergänzen.',
+            if (fallback.notes != null && fallback.notes!.isNotEmpty)
+              fallback.notes!,
+          ].join('\n'),
+        ),
       );
     }
   }

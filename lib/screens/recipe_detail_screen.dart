@@ -4,7 +4,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/recipe.dart';
 import '../services/app_repository.dart';
 import '../services/recipe_extractor.dart';
+import '../services/recipe_share_action.dart';
+import '../services/serving_scaler.dart';
 import '../theme/app_theme.dart';
+import '../widgets/recipe_cover_image.dart';
 import 'cook_mode_screen.dart';
 import 'edit_recipe_screen.dart';
 
@@ -28,11 +31,26 @@ class RecipeDetailScreen extends StatefulWidget {
 
 class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   late Recipe _recipe;
+  late int _baseServings;
+  late int _currentServings;
 
   @override
   void initState() {
     super.initState();
     _recipe = widget.recipe;
+    _baseServings = ServingScaler.parseCount(_recipe.servings);
+    _currentServings = _baseServings;
+  }
+
+  Recipe get _scaledRecipe {
+    return _recipe.copyWith(
+      servings: ServingScaler.formatServings(_currentServings),
+      ingredients: ServingScaler.scaleAll(
+        _recipe.ingredients,
+        fromServings: _baseServings,
+        toServings: _currentServings,
+      ),
+    );
   }
 
   Future<void> _openSource() async {
@@ -48,7 +66,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   Future<void> _addToShopping() async {
-    final count = await widget.repository.addRecipeToShopping(_recipe);
+    final count = await widget.repository.addRecipeToShopping(_scaledRecipe);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -73,7 +91,11 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       ),
     );
     if (updated != null && mounted) {
-      setState(() => _recipe = updated);
+      setState(() {
+        _recipe = updated;
+        _baseServings = ServingScaler.parseCount(updated.servings);
+        _currentServings = _baseServings;
+      });
     }
   }
 
@@ -112,6 +134,15 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         title: const Text('Rezept'),
         actions: [
           IconButton(
+            tooltip: 'Teilen',
+            onPressed: () => shareRecipeToApps(
+              context,
+              _recipe,
+              portions: _currentServings,
+            ),
+            icon: const Icon(Icons.ios_share),
+          ),
+          IconButton(
             tooltip: 'Bearbeiten',
             onPressed: _editRecipe,
             icon: const Icon(Icons.edit_outlined),
@@ -136,20 +167,24 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
             children: [
+              RecipeCoverImage(imageUrl: recipe.imageUrl, height: 210),
+              const SizedBox(height: 16),
               Text(
                 recipe.title,
                 style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 12),
+              _PortionStepper(
+                servings: _currentServings,
+                onChanged: (value) {
+                  setState(() => _currentServings = value);
+                },
               ),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  if (recipe.servings != null && recipe.servings!.isNotEmpty)
-                    _MetaChip(
-                      icon: Icons.restaurant,
-                      label: recipe.servings!,
-                    ),
                   if (recipe.prepTimeMinutes != null)
                     _MetaChip(
                       icon: Icons.timer_outlined,
@@ -204,7 +239,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                 onPressed: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => CookModeScreen(recipe: recipe),
+                      builder: (_) => CookModeScreen(recipe: _scaledRecipe),
                     ),
                   );
                 },
@@ -239,8 +274,15 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
               ),
               const SizedBox(height: 6),
               const Text('Das braucht ihr an Lebensmitteln:'),
+              if (_currentServings != _baseServings) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Mengen für ${ServingScaler.formatServings(_currentServings)} '
+                  '(Original: ${ServingScaler.formatServings(_baseServings)}).',
+                ),
+              ],
               const SizedBox(height: 12),
-              ...recipe.ingredients.asMap().entries.map(
+              ..._scaledRecipe.ingredients.asMap().entries.map(
                     (entry) => _IngredientTile(
                       index: entry.key + 1,
                       text: entry.value,
@@ -263,6 +305,49 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PortionStepper extends StatelessWidget {
+  const _PortionStepper({
+    required this.servings,
+    required this.onChanged,
+  });
+
+  final int servings;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.seed.withValues(alpha: 0.14)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.restaurant, color: AppTheme.seed),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('Portionen')),
+          IconButton(
+            tooltip: 'Weniger',
+            onPressed: servings <= 1 ? null : () => onChanged(servings - 1),
+            icon: const Icon(Icons.remove_circle_outline),
+          ),
+          Text(
+            '$servings',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          IconButton(
+            tooltip: 'Mehr',
+            onPressed: servings >= 20 ? null : () => onChanged(servings + 1),
+            icon: const Icon(Icons.add_circle_outline),
+          ),
+        ],
       ),
     );
   }

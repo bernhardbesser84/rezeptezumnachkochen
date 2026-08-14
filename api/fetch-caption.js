@@ -119,12 +119,19 @@ async function fetchFacebook(url) {
       ]);
       const title = cleanDishTitle(ogTitle || caption);
       const ogUrl = decodeEntities(meta(html, 'og:url') || '').trim();
+      const imageUrl = decodeEntities(
+        meta(html, 'og:image') ||
+          meta(html, 'og:image:url') ||
+          meta(html, 'og:image:secure_url') ||
+          '',
+      ).trim();
       if (caption || title) {
         return {
           title,
           caption,
           source: caption ? 'facebook-og' : 'none',
           canonicalUrl: ogUrl || finalUrl || url,
+          imageUrl,
         };
       }
     } catch (_) {
@@ -203,6 +210,7 @@ async function fetchYoutube(url) {
           title: fromPlayer.title,
           caption: fromPlayer.caption,
           source: 'youtube-player',
+          imageUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
         };
       }
     } catch (_) {
@@ -218,6 +226,7 @@ async function fetchYoutube(url) {
         title: fromApi.title,
         caption: fromApi.caption,
         source: 'youtube-innertube',
+        imageUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       };
     }
   } catch (_) {
@@ -231,6 +240,7 @@ async function fetchYoutube(url) {
     caption: '',
     source: 'none',
     warning: YOUTUBE_MANUAL_HINT,
+    imageUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
   };
 }
 
@@ -394,6 +404,7 @@ async function fetchTikTokOEmbed(url) {
     title,
     caption: title,
     source: title ? 'tiktok-oembed' : 'none',
+    imageUrl: (data.thumbnail_url || '').toString().trim(),
   };
 }
 
@@ -411,6 +422,7 @@ async function fetchInstagramOEmbed(url) {
       title,
       caption: title,
       source: title ? 'instagram-oembed' : 'none',
+      imageUrl: (data.thumbnail_url || '').toString().trim(),
     };
   } catch (_) {
     return fetchGenericOg(url);
@@ -430,6 +442,9 @@ async function fetchGenericOg(url) {
       title: decodeEntities(title).trim(),
       caption: decodeEntities(caption).trim(),
       source: caption ? 'og' : 'none',
+      imageUrl: decodeEntities(
+        meta(html, 'og:image') || meta(html, 'og:image:url') || '',
+      ).trim(),
     };
   } catch (_) {
     return { title: '', caption: '', source: 'none' };
