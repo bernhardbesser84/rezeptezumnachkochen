@@ -49,13 +49,15 @@ module.exports = async function handler(req, res) {
   }
 };
 
-const MAX_BYTES = 3_800_000; // unter Vercel-Limit (~4,5 MB Antwort)
+const MAX_BYTES = 4_400_000; // unter Vercel-Limit (~4,5 MB Antwort)
 const UA_IPHONE =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) '
   + 'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 '
   + 'Mobile/15E148 Safari/604.1';
 const UA_FACEBOOK =
   'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
+const UA_GOOGLEBOT =
+  'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
 const UA_ANDROID_YT =
   'com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip';
 
@@ -70,20 +72,7 @@ async function fetchVideo(pageUrl) {
     host.includes('facebook.com') || host === 'fb.watch' || host === 'fb.com';
 
   if (isFacebook) {
-    const fromMobile = await videoFromHtmlMp4(pageUrl, UA_IPHONE);
-    if (fromMobile.ok) return fromMobile;
-
-    const fromBot = await videoFromOgTags(pageUrl, UA_FACEBOOK);
-    if (fromBot.ok) return fromBot;
-
-    return {
-      ok: false,
-      error:
-        'Facebook hat kein ladbares Video geliefert. '
-        + 'Tipp: Im Browser auf Teilen → „Video speichern“ / Download, '
-        + 'dann hier „Video wählen“.',
-      warning: 'facebook-no-mp4',
-    };
+    return fetchFacebookVideo(pageUrl);
   }
 
   const fromOg = await videoFromOgTags(pageUrl, UA_IPHONE);
@@ -269,26 +258,162 @@ async function fetchHtml(url, userAgent) {
     redirect: 'follow',
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.text();
+  return {
+    html: await response.text(),
+    finalUrl: response.url || url,
+  };
 }
 
-async function videoFromHtmlMp4(pageUrl, userAgent) {
-  const html = await fetchHtml(pageUrl, userAgent);
-  const mp4Url = extractMp4Url(html);
-  if (!mp4Url) return { ok: false };
-  return downloadVideo(mp4Url, 'facebook-reel.mp4', 'facebook-mp4');
+/**
+ * Facebook-Share-Links (/share/r/…) liefern oft nur die Caption.
+ * Die MP4-URL steckt in og:video beim iPhone-UA — oder erst auf der Reel-URL.
+ * Zu große Dateien werden abgeschnitten, nicht verworfen (Facebook ignoriert Range).
+ */
+async function fetchFacebookVideo(pageUrl) {
+  const agents = [UA_IPHONE, UA_GOOGLEBOT, UA_FACEBOOK];
+  const queue = facebookUrlVariants(pageUrl);
+  const triedPages = new Set();
+  let sawMediaUrl = false;
+
+  while (queue.length > 0) {
+    const url = queue.shift();
+    if (!url || triedPages.has(url)) continue;
+    triedPages.add(url);
+
+    for (const agent of agents) {
+      try {
+        const { html, finalUrl } = await fetchHtml(url, agent);
+        if (html.includes('Error Facebook') && !html.includes('og:video')) {
+          continue;
+        }
+
+        const canonical = facebookCanonicalUrl(html, finalUrl, url);
+        if (canonical && !triedPages.has(canonical)) {
+          queue.push(canonical);
+        }
+
+        const candidates = collectFacebookVideoUrls(html);
+        if (candidates.length > 0) sawMediaUrl = true;
+        for (const videoUrl of candidates) {
+          const result = await downloadVideo(
+            videoUrl,
+            'facebook-reel.mp4',
+            'facebook-mp4',
+          );
+          if (result.ok) return result;
+        }
+      } catch (_) {
+        // Nächsten UA / Link versuchen.
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    error: sawMediaUrl
+      ? 'Das Facebook-Video war nicht vollständig ladbar. '
+        + 'Tipp: Im Browser auf Teilen → „Video speichern“, '
+        + 'dann hier „Video wählen“.'
+      : 'Facebook hat kein ladbares Video geliefert. '
+        + 'Tipp: Im Browser auf Teilen → „Video speichern“ / Download, '
+        + 'dann hier „Video wählen“.',
+    warning: 'facebook-no-mp4',
+  };
+}
+
+function facebookUrlVariants(pageUrl) {
+  const urls = [pageUrl];
+  try {
+    const uri = new URL(pageUrl);
+    const host = uri.hostname.replace(/^www\./, '').toLowerCase();
+    if (host.endsWith('facebook.com') || host === 'fb.watch' || host === 'fb.com') {
+      const mobile = new URL(pageUrl);
+      mobile.hostname = 'm.facebook.com';
+      urls.push(mobile.toString());
+    }
+  } catch (_) {
+    // ignore
+  }
+  return uniqueStrings(urls);
+}
+
+function facebookCanonicalUrl(html, finalUrl, fallback) {
+  const og = cleanMediaUrl(meta(html, 'og:url') || '');
+  if (/facebook\.com\/(reel|reels|watch|video|videos|share)\//i.test(og)) {
+    return og;
+  }
+  const reel = String(html || '').match(/facebook\.com\/reel\/(\d+)/i);
+  if (reel) {
+    return `https://www.facebook.com/reel/${reel[1]}/`;
+  }
+  if (finalUrl && /facebook\.com\/reel\//i.test(finalUrl) && finalUrl !== fallback) {
+    return finalUrl;
+  }
+  return '';
+}
+
+function collectFacebookVideoUrls(html) {
+  const urls = [];
+  const add = (raw) => {
+    const url = cleanMediaUrl(raw);
+    if (!isPlayableVideoUrl(url) || urls.includes(url)) return;
+    urls.push(url);
+  };
+
+  add(meta(html, 'og:video:secure_url'));
+  add(meta(html, 'og:video:url'));
+  add(meta(html, 'og:video'));
+  for (const mp4 of extractAllMp4Urls(html)) add(mp4);
+
+  const jsonKeys = [
+    'playable_url',
+    'playable_url_quality_hd',
+    'browser_native_sd_url',
+    'browser_native_hd_url',
+    'sd_src',
+    'hd_src',
+  ];
+  for (const key of jsonKeys) {
+    const re = new RegExp(`"${key}"\\s*:\\s*"(https?:[^"]+)"`, 'gi');
+    let match = re.exec(html);
+    while (match) {
+      add(match[1]);
+      match = re.exec(html);
+    }
+  }
+
+  urls.sort((a, b) => facebookVideoScore(a) - facebookVideoScore(b));
+  return urls;
+}
+
+function facebookVideoScore(url) {
+  const lower = url.toLowerCase();
+  let score = 0;
+  if (lower.includes('fbcdn.net')) score -= 20;
+  if (/\.mp4(\?|$)/i.test(url)) score -= 10;
+  if (/360|sd|m367|basic-gen2_360/.test(lower)) score -= 8;
+  if (/1080|720|hd_src|quality_hd/.test(lower)) score += 12;
+  return score;
+}
+
+function isPlayableVideoUrl(url) {
+  if (!/^https?:\/\//i.test(url)) return false;
+  const host = safeHost(url);
+  if (host.includes('fbcdn.net') || host.includes('cdninstagram.com')) return true;
+  if (host.includes('facebook.com') && !/\.mp4(\?|$)/i.test(url)) return false;
+  return /\.mp4(\?|$)/i.test(url);
 }
 
 async function videoFromOgTags(pageUrl, userAgent) {
-  const html = await fetchHtml(pageUrl, userAgent);
+  const { html } = await fetchHtml(pageUrl, userAgent);
   const candidates = [
     meta(html, 'og:video:secure_url'),
     meta(html, 'og:video:url'),
     meta(html, 'og:video'),
     extractMp4Url(html),
   ]
-    .map((u) => decodeEntities(u || '').trim())
-    .filter((u) => /^https?:\/\//i.test(u));
+    .map((u) => cleanMediaUrl(u || ''))
+    .filter((u) => isPlayableVideoUrl(u));
 
   for (const videoUrl of candidates) {
     const result = await downloadVideo(
@@ -301,25 +426,35 @@ async function videoFromOgTags(pageUrl, userAgent) {
   return { ok: false };
 }
 
-function extractMp4Url(html) {
-  const matches = html.match(
+function extractAllMp4Urls(html) {
+  const matches = String(html || '').match(
     /https?:\\?\/\\?\/[^"'<>\s]+?\.mp4[^"'<>\s]*/gi,
   );
-  if (!matches || matches.length === 0) return '';
+  if (!matches) return [];
+  return uniqueStrings(matches.map((raw) => cleanMediaUrl(raw)).filter(Boolean));
+}
+
+function extractMp4Url(html) {
+  const urls = extractAllMp4Urls(html);
   let best = '';
-  for (const raw of matches) {
-    let url = decodeEntities(raw)
-      .replace(/\\\//g, '/')
-      .replace(/\\u0025/g, '%');
-    try {
-      url = JSON.parse(`"${url.replace(/"/g, '\\"')}"`);
-    } catch (_) {
-      // schon plain
-    }
-    url = url.replace(/&amp;/g, '&');
+  for (const url of urls) {
     if (url.length > best.length) best = url;
   }
   return best;
+}
+
+function cleanMediaUrl(raw) {
+  let url = decodeEntities(String(raw || '')).trim();
+  url = url.replace(/\\\//g, '/');
+  url = url.replace(/\\u0025/gi, '%');
+  url = url.replace(/\\u0026/gi, '&');
+  url = url.replace(/\\u002f/gi, '/');
+  try {
+    url = JSON.parse(`"${url.replace(/"/g, '\\"')}"`);
+  } catch (_) {
+    // schon plain
+  }
+  return url.replace(/&amp;/g, '&').replace(/\\+$/g, '');
 }
 
 async function downloadVideo(videoUrl, fileName, source, mimeType = 'video/mp4') {
@@ -327,7 +462,8 @@ async function downloadVideo(videoUrl, fileName, source, mimeType = 'video/mp4')
     headers: {
       'User-Agent': UA_IPHONE,
       Accept: 'video/mp4,audio/mp4,video/*,audio/*,*/*',
-      Range: `bytes=0-${MAX_BYTES}`,
+      Range: `bytes=0-${MAX_BYTES - 1}`,
+      Referer: 'https://www.facebook.com/',
     },
     redirect: 'follow',
   });
@@ -336,16 +472,10 @@ async function downloadVideo(videoUrl, fileName, source, mimeType = 'video/mp4')
     return { ok: false };
   }
 
-  const buf = Buffer.from(await response.arrayBuffer());
+  // Facebook ignoriert Range oft und sendet die ganze Datei.
+  // Lieber den Anfang behalten (für gesprochene Schritte), als komplett scheitern.
+  const buf = await readLimited(response, MAX_BYTES);
   if (buf.length < 1000) return { ok: false };
-  if (buf.length > MAX_BYTES) {
-    return {
-      ok: false,
-      error:
-        'Video ist zu groß für den automatischen Download. '
-        + 'Bitte speichern und manuell unter „Video wählen“ anhängen.',
-    };
-  }
 
   const head = buf.slice(0, 64).toString('utf8');
   if (head.includes('<html') || head.includes('<!DOCTYPE')) {
@@ -359,6 +489,47 @@ async function downloadVideo(videoUrl, fileName, source, mimeType = 'video/mp4')
     fileName,
     source,
   };
+}
+
+async function readLimited(response, maxBytes) {
+  const body = response.body;
+  if (!body || typeof body.getReader !== 'function') {
+    const buf = Buffer.from(await response.arrayBuffer());
+    return buf.length > maxBytes ? buf.subarray(0, maxBytes) : buf;
+  }
+
+  const reader = body.getReader();
+  const chunks = [];
+  let received = 0;
+  try {
+    while (received < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+      const take = Math.min(value.length, maxBytes - received);
+      chunks.push(
+        take === value.length
+          ? Buffer.from(value)
+          : Buffer.from(value.subarray(0, take)),
+      );
+      received += take;
+      if (take < value.length) break;
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch (_) {
+      // ignore
+    }
+  }
+  return Buffer.concat(chunks, received);
+}
+
+function uniqueStrings(values) {
+  const result = [];
+  for (const value of values) {
+    if (value && !result.includes(value)) result.push(value);
+  }
+  return result;
 }
 
 function meta(html, property) {

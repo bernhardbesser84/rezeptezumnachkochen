@@ -21,13 +21,18 @@ class FetchedVideo {
 }
 
 class VideoLinkFetcher {
-  VideoLinkFetcher({http.Client? client}) : _client = client ?? http.Client();
+  VideoLinkFetcher({
+    http.Client? client,
+    int? maxBytesNative,
+  })  : _client = client ?? http.Client(),
+        maxBytesNative = maxBytesNative ?? VideoLinkFetcher.defaultMaxBytesNative;
 
   final http.Client _client;
+  final int maxBytesNative;
 
   /// Web/API: unter Vercel-Limit. Nativ etwas großzügiger.
-  static const maxBytesWeb = 3800000;
-  static const maxBytesNative = 15000000;
+  static const maxBytesWeb = 4400000;
+  static const defaultMaxBytesNative = 15000000;
 
   static const _iphoneUa =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) '
@@ -175,6 +180,10 @@ class VideoLinkFetcher {
         host == 'fb.watch' ||
         host == 'fb.com';
 
+    if (isFacebook) {
+      return _fetchFacebookDirect(url);
+    }
+
     final pageResponse = await _client
         .get(
           Uri.parse(url),
@@ -200,21 +209,196 @@ class VideoLinkFetcher {
         _metaContent(html, 'og:video');
 
     if (videoUrl == null || videoUrl.isEmpty) {
-      throw Exception(
-        isFacebook
-            ? 'Facebook hat kein ladbares Video geliefert. '
-                'Tipp: Video speichern und unter „Video wählen“ anhängen.'
-            : 'Unter dem Link wurde kein Video gefunden.',
-      );
+      throw Exception('Unter dem Link wurde kein Video gefunden.');
     }
 
     return _downloadBytes(
       videoUrl,
-      fileName: isFacebook ? 'facebook-reel.mp4' : 'rezept-video.mp4',
+      fileName: 'rezept-video.mp4',
       mimeType: 'video/mp4',
       source: 'direct',
       maxBytes: maxBytesNative,
     );
+  }
+
+  static const _facebookBotUa =
+      'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
+  static const _googleBotUa =
+      'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
+
+  Future<FetchedVideo> _fetchFacebookDirect(String pageUrl) async {
+    final queue = _facebookUrlVariants(pageUrl);
+    final tried = <String>{};
+    var sawMediaUrl = false;
+
+    while (queue.isNotEmpty) {
+      final url = queue.removeAt(0);
+      if (!tried.add(url)) continue;
+
+      for (final agent in [_iphoneUa, _googleBotUa, _facebookBotUa]) {
+        try {
+          final pageResponse = await _client
+              .get(
+                Uri.parse(url),
+                headers: {
+                  'User-Agent': agent,
+                  'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+                  'Accept': 'text/html,application/xhtml+xml',
+                },
+              )
+              .timeout(const Duration(seconds: 25));
+          if (pageResponse.statusCode < 200 || pageResponse.statusCode >= 400) {
+            continue;
+          }
+
+          final html = pageResponse.body;
+          if (html.contains('Error Facebook') && !html.contains('og:video')) {
+            continue;
+          }
+
+          final canonical = _facebookCanonicalUrl(html);
+          if (canonical != null && !tried.contains(canonical)) {
+            queue.add(canonical);
+          }
+
+          final candidates = _collectFacebookVideoUrls(html);
+          if (candidates.isNotEmpty) sawMediaUrl = true;
+          for (final videoUrl in candidates) {
+            try {
+              return await _downloadBytes(
+                videoUrl,
+                fileName: 'facebook-reel.mp4',
+                mimeType: 'video/mp4',
+                source: 'facebook-mp4',
+                maxBytes: maxBytesNative,
+                referer: 'https://www.facebook.com/',
+              );
+            } catch (_) {
+              // Nächste Video-URL versuchen.
+            }
+          }
+        } catch (_) {
+          // Nächsten UA versuchen.
+        }
+      }
+    }
+
+    throw Exception(
+      sawMediaUrl
+          ? 'Das Facebook-Video war nicht vollständig ladbar. '
+              'Tipp: Video speichern und unter „Video wählen“ anhängen.'
+          : 'Facebook hat kein ladbares Video geliefert. '
+              'Tipp: Video speichern und unter „Video wählen“ anhängen.',
+    );
+  }
+
+  List<String> _facebookUrlVariants(String pageUrl) {
+    final urls = <String>[pageUrl];
+    final uri = Uri.tryParse(pageUrl);
+    if (uri != null) {
+      final host = uri.host.replaceFirst('www.', '').toLowerCase();
+      if (host.contains('facebook.com') || host == 'fb.watch' || host == 'fb.com') {
+        urls.add(
+          uri.replace(host: 'm.facebook.com').toString(),
+        );
+      }
+    }
+    return [
+      for (final url in urls)
+        if (url.isNotEmpty) url,
+    ];
+  }
+
+  String? _facebookCanonicalUrl(String html) {
+    final og = _metaContent(html, 'og:url');
+    if (og != null &&
+        RegExp(r'facebook\.com/(reel|reels|watch|video|videos|share)/')
+            .hasMatch(og)) {
+      return og;
+    }
+    final reel = RegExp(r'facebook\.com/reel/(\d+)', caseSensitive: false)
+        .firstMatch(html);
+    if (reel != null) {
+      return 'https://www.facebook.com/reel/${reel.group(1)}/';
+    }
+    return null;
+  }
+
+  List<String> _collectFacebookVideoUrls(String html) {
+    final urls = <String>[];
+    void add(String? raw) {
+      final url = _cleanMediaUrl(raw);
+      if (url == null || !_isPlayableVideoUrl(url) || urls.contains(url)) {
+        return;
+      }
+      urls.add(url);
+    }
+
+    add(_metaContent(html, 'og:video:secure_url'));
+    add(_metaContent(html, 'og:video:url'));
+    add(_metaContent(html, 'og:video'));
+    for (final match in RegExp(
+      r'''https?:\\?/\\?/[^"' <>]+?\.mp4[^"'<>]*''',
+      caseSensitive: false,
+    ).allMatches(html)) {
+      add(match.group(0));
+    }
+
+    for (final key in [
+      'playable_url',
+      'playable_url_quality_hd',
+      'browser_native_sd_url',
+      'browser_native_hd_url',
+      'sd_src',
+      'hd_src',
+    ]) {
+      for (final match in RegExp(
+        '"$key"\\s*:\\s*"(https?:[^"]+)"',
+        caseSensitive: false,
+      ).allMatches(html)) {
+        add(match.group(1));
+      }
+    }
+
+    urls.sort((a, b) => _facebookVideoScore(a).compareTo(_facebookVideoScore(b)));
+    return urls;
+  }
+
+  int _facebookVideoScore(String url) {
+    final lower = url.toLowerCase();
+    var score = 0;
+    if (lower.contains('fbcdn.net')) score -= 20;
+    if (RegExp(r'\.mp4(\?|$)').hasMatch(lower)) score -= 10;
+    if (RegExp(r'360|sd|m367|basic-gen2_360').hasMatch(lower)) score -= 8;
+    if (RegExp(r'1080|720|hd_src|quality_hd').hasMatch(lower)) score += 12;
+    return score;
+  }
+
+  bool _isPlayableVideoUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !(uri.isScheme('http') || uri.isScheme('https'))) {
+      return false;
+    }
+    final host = uri.host.toLowerCase();
+    if (host.contains('fbcdn.net') || host.contains('cdninstagram.com')) {
+      return true;
+    }
+    final hasMp4 = url.toLowerCase().contains('.mp4');
+    if (host.contains('facebook.com') && !hasMp4) return false;
+    return hasMp4;
+  }
+
+  String? _cleanMediaUrl(String? raw) {
+    if (raw == null) return null;
+    var url = raw.trim();
+    if (url.isEmpty) return null;
+    url = url
+        .replaceAll(r'\/', '/')
+        .replaceAll('&amp;', '&')
+        .replaceAll(r'\u0025', '%')
+        .replaceAll(r'\u0026', '&')
+        .replaceAll(r'\u002f', '/');
+    return url.isEmpty ? null : url;
   }
 
   Future<FetchedVideo> _downloadBytes(
@@ -223,6 +407,7 @@ class VideoLinkFetcher {
     required String mimeType,
     required String source,
     required int maxBytes,
+    String? referer,
   }) async {
     final videoResponse = await _client
         .get(
@@ -230,7 +415,8 @@ class VideoLinkFetcher {
           headers: {
             'User-Agent': _iphoneUa,
             'Accept': 'video/mp4,audio/mp4,video/*,audio/*,*/*',
-            'Range': 'bytes=0-$maxBytes',
+            'Range': 'bytes=0-${maxBytes - 1}',
+            'Referer': ?referer,
           },
         )
         .timeout(const Duration(seconds: 60));
@@ -242,15 +428,17 @@ class VideoLinkFetcher {
       );
     }
 
-    final bytes = videoResponse.bodyBytes;
+    var bytes = videoResponse.bodyBytes;
+    if (bytes.length > maxBytes) {
+      bytes = bytes.sublist(0, maxBytes);
+    }
     if (bytes.length < 1000) {
       throw Exception('Video-Datei war leer.');
     }
-    if (bytes.length > maxBytes) {
-      throw Exception(
-        'Video ist zu groß für den automatischen Download. '
-        'Bitte speichern und manuell anhängen.',
-      );
+
+    final head = String.fromCharCodes(bytes.take(64));
+    if (head.contains('<html') || head.contains('<!DOCTYPE')) {
+      throw Exception('Video-Datei war ungültig.');
     }
 
     return FetchedVideo(
