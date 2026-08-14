@@ -12,12 +12,14 @@ class FetchedCaption {
     required this.caption,
     required this.source,
     this.warning,
+    this.imageUrl,
   });
 
   final String title;
   final String caption;
   final String source;
   final String? warning;
+  final String? imageUrl;
 
   bool get hasCaption => caption.trim().isNotEmpty;
 }
@@ -98,6 +100,7 @@ class CaptionFetcher {
       caption: caption,
       source: source,
       warning: warning,
+      imageUrl: (body['imageUrl'] as String?)?.trim(),
     );
   }
 
@@ -153,6 +156,7 @@ class CaptionFetcher {
       title: preview.title,
       caption: caption,
       source: host.contains('facebook') ? 'facebook-og' : 'og',
+      imageUrl: preview.imageUrl,
     );
   }
 

@@ -12,9 +12,11 @@ create table if not exists recipes (
   servings text,
   prep_time_minutes int,
   notes text,
-  categories jsonb not null default '[]'::jsonb
+  categories jsonb not null default '[]'::jsonb,
+  image_url text
 );
 alter table recipes add column if not exists categories jsonb not null default '[]'::jsonb;
+alter table recipes add column if not exists image_url text;
 
 create table if not exists shopping_items (
   id text primary key,

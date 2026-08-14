@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models/recipe.dart';
 import '../services/app_repository.dart';
@@ -8,6 +11,7 @@ import '../services/recipe_extractor.dart';
 import '../services/video_link_fetcher.dart';
 import '../theme/app_theme.dart';
 import '../widgets/recipe_category_picker.dart';
+import '../widgets/recipe_cover_image.dart';
 
 /// Alle Rezeptfelder nachträglich ändern und speichern.
 class EditRecipeScreen extends StatefulWidget {
@@ -37,6 +41,7 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
   late final TextEditingController _notes;
   late final TextEditingController _sourceUrl;
   List<String> _categories = const [];
+  String? _imageUrl;
   bool _saving = false;
   bool _retryingAi = false;
   String? _aiStatus;
@@ -55,6 +60,7 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
     _notes = TextEditingController(text: r.notes ?? '');
     _sourceUrl = TextEditingController(text: r.sourceUrl);
     _categories = List<String>.from(r.categories);
+    _imageUrl = r.imageUrl;
     if (widget.autoStartAiRetry) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _retryAiEnrichment();
@@ -103,6 +109,7 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
       prepTimeMinutes: prep,
       notes: notes.isEmpty ? null : notes,
       categories: _categories,
+      imageUrl: _imageUrl,
     );
   }
 
@@ -123,6 +130,42 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
     );
     if (!mounted || selected == null) return;
     setState(() => _categories = selected);
+  }
+
+  Future<void> _pickCoverImage() async {
+    try {
+      final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 720,
+        imageQuality: 55,
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return;
+      final mime = file.mimeType?.startsWith('image/') == true
+          ? file.mimeType!
+          : 'image/jpeg';
+      final uri = bytes.length > 220000
+          ? null
+          : 'data:$mime;base64,${base64Encode(bytes)}';
+      if (uri == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Das Foto ist zu groß. Bitte ein kleineres Bild wählen.',
+            ),
+          ),
+        );
+        return;
+      }
+      setState(() => _imageUrl = uri);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bild konnte nicht geladen werden.')),
+      );
+    }
   }
 
   Future<void> _save({Recipe? recipe, String successMessage = 'Rezept gespeichert.'}) async {
@@ -373,6 +416,28 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
               labelText: 'Video-Link (optional)',
               hintText: 'https://...',
             ),
+          ),
+          const SizedBox(height: 12),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Vorschaubild'),
+            subtitle: Text(
+              _imageUrl == null || _imageUrl!.isEmpty
+                  ? 'Noch kein Bild — Foto wählen oder vom Video-Link'
+                  : 'Bild ist gesetzt',
+            ),
+            leading: SizedBox(
+              width: 56,
+              height: 56,
+              child: RecipeCoverImage(
+                imageUrl: _imageUrl,
+                height: 56,
+                width: 56,
+                borderRadius: 10,
+              ),
+            ),
+            trailing: const Icon(Icons.photo_outlined),
+            onTap: busy ? null : _pickCoverImage,
           ),
           const SizedBox(height: 12),
           ListTile(

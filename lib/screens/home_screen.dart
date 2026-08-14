@@ -15,6 +15,8 @@ import '../services/recipe_extractor.dart';
 import '../theme/app_theme.dart';
 import '../utils/platform_hints.dart';
 import '../widgets/pwa_update_banner.dart';
+import '../widgets/recipe_cover_image.dart';
+import '../services/recipe_share_action.dart';
 import 'add_recipe_screen.dart';
 import 'family_screen.dart';
 import 'meal_plan_screen.dart';
@@ -477,6 +479,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 recipe: entry.value,
                                 tintIndex: entry.key,
                                 onTap: () => _openDetail(entry.value),
+                                onShare: () => shareRecipeToApps(
+                                  context,
+                                  entry.value,
+                                ),
                               ),
                             ),
                     ],
@@ -705,11 +711,13 @@ class _RecipeCard extends StatelessWidget {
   const _RecipeCard({
     required this.recipe,
     required this.onTap,
+    required this.onShare,
     required this.tintIndex,
   });
 
   final Recipe recipe;
   final VoidCallback onTap;
+  final VoidCallback onShare;
   final int tintIndex;
 
   static const _tints = [
@@ -755,6 +763,13 @@ class _RecipeCard extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
                       child: Row(
                         children: [
+                          RecipeCoverImage(
+                            imageUrl: recipe.imageUrl,
+                            height: 72,
+                            width: 72,
+                            borderRadius: 14,
+                          ),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -783,6 +798,11 @@ class _RecipeCard extends StatelessWidget {
                                 ],
                               ],
                             ),
+                          ),
+                          IconButton(
+                            tooltip: 'Teilen',
+                            onPressed: onShare,
+                            icon: const Icon(Icons.ios_share),
                           ),
                           Icon(
                             Icons.arrow_forward_rounded,

@@ -51,8 +51,15 @@ class FamilySyncService {
       headers: _headers(config, preferReturn: true),
       body: jsonEncode(payload),
     );
-    // Alte Cloud-Tabellen ohne categories-Spalte: ohne Feld erneut versuchen.
-    if (_isMissingCategoriesColumn(response)) {
+    if (_isMissingRecipeColumn(response, 'image_url')) {
+      payload.remove('image_url');
+      response = await _client.post(
+        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
+        headers: _headers(config, preferReturn: true),
+        body: jsonEncode(payload),
+      );
+    }
+    if (_isMissingRecipeColumn(response, 'categories')) {
       final fallback = Map<String, dynamic>.from(payload)..remove('categories');
       response = await _client.post(
         _rest(config, 'recipes', query: {'on_conflict': 'id'}),
@@ -161,9 +168,21 @@ class FamilySyncService {
       headers: _headers(config),
       body: jsonEncode(payload),
     );
-    if (_isMissingCategoriesColumn(response)) {
+    if (_isMissingRecipeColumn(response, 'image_url')) {
+      final stripped = payload
+          .map((row) => Map<String, dynamic>.from(row)..remove('image_url'))
+          .toList();
+      response = await _client.post(
+        _rest(config, 'recipes', query: {'on_conflict': 'id'}),
+        headers: _headers(config),
+        body: jsonEncode(stripped),
+      );
+    }
+    if (_isMissingRecipeColumn(response, 'categories')) {
       final fallback = payload
-          .map((row) => Map<String, dynamic>.from(row)..remove('categories'))
+          .map((row) => Map<String, dynamic>.from(row)
+            ..remove('categories')
+            ..remove('image_url'))
           .toList();
       response = await _client.post(
         _rest(config, 'recipes', query: {'on_conflict': 'id'}),
@@ -320,11 +339,11 @@ class FamilySyncService {
     }
   }
 
-  bool _isMissingCategoriesColumn(http.Response response) {
+  bool _isMissingRecipeColumn(http.Response response, String column) {
     if (response.statusCode < 400) return false;
     final body = response.body.toLowerCase();
-    final mentionsCategories = body.contains('categories');
-    return mentionsCategories &&
+    final mentions = body.contains(column.toLowerCase());
+    return mentions &&
         (body.contains('pgrst204') ||
             body.contains('could not find') ||
             body.contains('schema cache') ||
