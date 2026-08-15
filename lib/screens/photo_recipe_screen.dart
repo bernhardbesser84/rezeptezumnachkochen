@@ -253,11 +253,19 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
         categories: selectedCategories,
         imageUrl: _coverFromFirstPhoto(),
       );
-      await widget.repository.saveRecipe(recipe);
+      final cloudWarning = await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {
         await widget.repository.addRecipeToShopping(recipe);
       }
       if (!mounted) return;
+      if (cloudWarning != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(cloudWarning),
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      }
       Navigator.pop(context, recipe);
     } finally {
       if (mounted) setState(() => _busy = false);

@@ -187,10 +187,13 @@ class _EditRecipeScreenState extends State<EditRecipeScreen> {
 
     setState(() => _saving = true);
     try {
-      await widget.repository.saveRecipe(draft);
+      final cloudWarning = await widget.repository.saveRecipe(draft);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(successMessage)),
+        SnackBar(
+          content: Text(cloudWarning ?? successMessage),
+          duration: Duration(seconds: cloudWarning == null ? 3 : 8),
+        ),
       );
       Navigator.pop(context, draft);
     } catch (e) {

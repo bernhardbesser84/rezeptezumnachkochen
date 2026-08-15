@@ -53,8 +53,37 @@ void main() {
       }),
     );
 
-    await sync.pushRecipe(cloud, recipe);
+    final result = await sync.pushRecipe(cloud, recipe);
     expect(calls, 2);
+    expect(result.skippedImageUrl, isTrue);
+  });
+
+  test('Nach angelegter Spalte wird image_url wieder mitgeschickt', () async {
+    var calls = 0;
+    final sync = FamilySyncService(
+      client: MockClient((request) async {
+        calls++;
+        final decoded = jsonDecode(request.body) as Map<String, dynamic>;
+        // Erster Aufruf: Spalte fehlt. Zweiter Speichern-Versuch: Spalte da.
+        if (calls == 1) {
+          return http.Response(missingImageUrlBody, 400);
+        }
+        if (calls == 2) {
+          expect(decoded.containsKey('image_url'), isFalse);
+          return http.Response('{}', 201);
+        }
+        expect(decoded['image_url'], 'https://example.com/doener.jpg');
+        return http.Response('{}', 201);
+      }),
+    );
+
+    final first = await sync.pushRecipe(cloud, recipe);
+    expect(first.skippedImageUrl, isTrue);
+    expect(calls, 2);
+
+    final second = await sync.pushRecipe(cloud, recipe);
+    expect(second.skippedImageUrl, isFalse);
+    expect(calls, 3);
   });
 
   test('Rezept bleibt lokal gespeichert, auch wenn Cloud image_url ablehnt',
@@ -64,14 +93,19 @@ void main() {
     final repo = AppRepository(
       storage: storage,
       sync: FamilySyncService(
-        client: MockClient(
-          (_) async => http.Response(missingImageUrlBody, 400),
-        ),
+        client: MockClient((request) async {
+          final decoded = jsonDecode(request.body) as Map<String, dynamic>;
+          if (decoded.containsKey('image_url')) {
+            return http.Response(missingImageUrlBody, 400);
+          }
+          return http.Response('{}', 201);
+        }),
       ),
     );
 
-    await repo.saveRecipe(recipe);
+    final warning = await repo.saveRecipe(recipe);
     final saved = await storage.loadRecipes();
     expect(saved.single.imageUrl, 'https://example.com/doener.jpg');
+    expect(warning, contains('image_url'));
   });
 }

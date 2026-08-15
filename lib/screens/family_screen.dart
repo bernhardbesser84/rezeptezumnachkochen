@@ -370,6 +370,18 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 ),
                 const SizedBox(height: 20),
                 const _InfoCard(
+                  title: 'Vorschaubilder in der Cloud (einmalig)',
+                  body:
+                      'Damit Bilder beim Backup wiederhergestellt werden:\n\n'
+                      '1. supabase.com → dein Projekt öffnen\n'
+                      '2. Links SQL → New query\n'
+                      '3. Diese Zeile einfügen und Run tippen:\n'
+                      'alter table recipes add column if not exists image_url text;\n\n'
+                      '4. Hier „Verbinden & Sync“ tippen\n'
+                      '5. Rezepte mit Bild erneut speichern',
+                ),
+                const SizedBox(height: 12),
+                const _InfoCard(
                   title: 'Einmalig in Supabase (Tabellen anlegen)',
                   body:
                       'URL und Schlüssel sind schon in der App. '

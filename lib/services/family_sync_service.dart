@@ -9,6 +9,14 @@ import '../models/meal_plan_entry.dart';
 import '../models/recipe.dart';
 import '../models/shopping_item.dart';
 
+/// Ergebnis beim Hochladen eines Rezepts in die Familien-Cloud.
+class CloudRecipePushResult {
+  const CloudRecipePushResult({this.skippedImageUrl = false});
+
+  /// True, wenn die Cloud-Spalte image_url noch fehlt.
+  final bool skippedImageUrl;
+}
+
 /// Synchronisiert Rezepte und Einkaufsliste über Supabase (kostenlose Cloud).
 /// Ohne Cloud-Daten in den Einstellungen bleibt alles nur lokal auf dem Gerät.
 class FamilySyncService {
@@ -16,11 +24,14 @@ class FamilySyncService {
 
   final http.Client _client;
 
-  FamilyConfig _cfg(FamilyConfig config) => config.withEffectiveCloud();
+  /// Hinweis, wenn Vorschaubilder noch nicht in der Cloud landen können.
+  static const imageUrlMigrationHint =
+      'Vorschaubild ist lokal gespeichert, aber noch nicht in der Cloud. '
+      'Bitte einmal in Supabase (SQL Editor) ausführen:\n'
+      'alter table recipes add column if not exists image_url text;\n'
+      'Danach Rezept erneut speichern oder „Verbinden & Sync“.';
 
-  /// Spalten, die in der Live-Cloud noch fehlen (z. B. image_url).
-  /// Nach dem ersten Fehler nicht mehr mitsenden, damit Speichern klappt.
-  final Set<String> _omittedRecipeColumns = <String>{};
+  FamilyConfig _cfg(FamilyConfig config) => config.withEffectiveCloud();
 
   Uri _rest(
     FamilyConfig config,
@@ -47,14 +58,24 @@ class FamilySyncService {
     };
   }
 
-  Future<void> pushRecipe(FamilyConfig config, Recipe recipe) async {
-    if (!config.hasEffectiveCloud) return;
+  Future<CloudRecipePushResult> pushRecipe(
+    FamilyConfig config,
+    Recipe recipe,
+  ) async {
+    if (!config.hasEffectiveCloud) {
+      return const CloudRecipePushResult();
+    }
+    final omitted = <String>{};
     final response = await _upsertRecipes(
       config,
       recipe.toCloud(familyCode: config.familyCode),
       preferReturn: true,
+      omitted: omitted,
     );
     _ensureOk(response, 'Rezept konnte nicht in die Cloud gespeichert werden.');
+    return CloudRecipePushResult(
+      skippedImageUrl: omitted.contains('image_url'),
+    );
   }
 
   Future<void> deleteRecipe(FamilyConfig config, String recipeId) async {
@@ -143,19 +164,26 @@ class FamilySyncService {
         .toList();
   }
 
-  Future<void> pushAllRecipes(
+  Future<CloudRecipePushResult> pushAllRecipes(
     FamilyConfig config,
     List<Recipe> recipes,
   ) async {
-    if (!config.hasEffectiveCloud || recipes.isEmpty) return;
+    if (!config.hasEffectiveCloud || recipes.isEmpty) {
+      return const CloudRecipePushResult();
+    }
     final payload =
         recipes.map((r) => r.toCloud(familyCode: config.familyCode)).toList();
+    final omitted = <String>{};
     final response = await _upsertRecipes(
       config,
       payload,
       preferReturn: false,
+      omitted: omitted,
     );
     _ensureOk(response, 'Rezepte konnten nicht synchronisiert werden.');
+    return CloudRecipePushResult(
+      skippedImageUrl: omitted.contains('image_url'),
+    );
   }
 
   Future<void> pushAllShoppingItems(
@@ -256,7 +284,7 @@ class FamilySyncService {
             .eq('family_code', _cfg(config).familyCode)
             .limit(1)
             .timeout(const Duration(seconds: 12));
-        return null;
+        return await _checkImageUrlColumn(config);
       } catch (_) {
         // Fallback: direkte REST-Anfrage (z. B. in Tests ohne initialize).
       }
@@ -274,7 +302,8 @@ class FamilySyncService {
           .get(uri, headers: _headers(config))
           .timeout(const Duration(seconds: 12));
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        return null;
+        final imageError = await _checkImageUrlColumn(config);
+        return imageError;
       }
       final body = response.body.toLowerCase();
       if (response.statusCode == 404 &&
@@ -296,6 +325,30 @@ class FamilySyncService {
     }
   }
 
+  /// Prüft, ob die Spalte für Vorschaubilder in der Cloud existiert.
+  Future<String?> _checkImageUrlColumn(FamilyConfig config) async {
+    final uri = _rest(
+      config,
+      'recipes',
+      query: {
+        'select': 'image_url',
+        'limit': '1',
+      },
+    );
+    final response = await _client
+        .get(uri, headers: _headers(config))
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return null;
+    }
+    if (_looksLikeMissingColumn(response.body)) {
+      return 'Cloud ist verbunden, aber Vorschaubilder fehlen noch. '
+          'Bitte einmal in Supabase (SQL Editor) ausführen:\n'
+          'alter table recipes add column if not exists image_url text;';
+    }
+    return null;
+  }
+
   void _ensureOk(http.Response response, String message) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final detail = response.body.trim();
@@ -314,8 +367,12 @@ class FamilySyncService {
     FamilyConfig config,
     Object payload, {
     required bool preferReturn,
+    required Set<String> omitted,
   }) async {
-    Object current = _stripOmittedColumns(payload);
+    // Jeder Speichern-Versuch startet mit allen Spalten (auch image_url).
+    // So landen Vorschaubilder automatisch in der Cloud, sobald die Spalte
+    // einmal in Supabase angelegt wurde — ohne App-Neustart.
+    Object current = _stripOmittedColumns(payload, omitted);
     var response = await _client.post(
       _rest(config, 'recipes', query: {'on_conflict': 'id'}),
       headers: _headers(config, preferReturn: preferReturn),
@@ -323,12 +380,12 @@ class FamilySyncService {
     );
 
     for (var i = 0; i < 6; i++) {
-      final missing = _missingRecipeColumn(response);
-      if (missing == null || _omittedRecipeColumns.contains(missing)) {
+      final missing = _missingRecipeColumn(response, omitted);
+      if (missing == null || omitted.contains(missing)) {
         break;
       }
-      _omittedRecipeColumns.add(missing);
-      current = _stripOmittedColumns(payload);
+      omitted.add(missing);
+      current = _stripOmittedColumns(payload, omitted);
       response = await _client.post(
         _rest(config, 'recipes', query: {'on_conflict': 'id'}),
         headers: _headers(config, preferReturn: preferReturn),
@@ -338,10 +395,10 @@ class FamilySyncService {
     return response;
   }
 
-  Object _stripOmittedColumns(Object payload) {
+  Object _stripOmittedColumns(Object payload, Set<String> omitted) {
     Map<String, dynamic> stripRow(Map<dynamic, dynamic> row) {
       final copy = Map<String, dynamic>.from(row);
-      for (final column in _omittedRecipeColumns) {
+      for (final column in omitted) {
         copy.remove(column);
       }
       return copy;
@@ -355,7 +412,7 @@ class FamilySyncService {
     return stripRow(Map<dynamic, dynamic>.from(payload as Map));
   }
 
-  String? _missingRecipeColumn(http.Response response) {
+  String? _missingRecipeColumn(http.Response response, Set<String> omitted) {
     if (response.statusCode < 400) return null;
     final body = response.body.toLowerCase();
     if (!_looksLikeMissingColumn(body)) return null;
@@ -369,12 +426,12 @@ class FamilySyncService {
     if (pg != null) return pg.group(1);
 
     for (final column in const ['image_url', 'categories']) {
-      if (body.contains(column) && !_omittedRecipeColumns.contains(column)) {
+      if (body.contains(column) && !omitted.contains(column)) {
         return column;
       }
     }
     for (final column in const ['image_url', 'categories']) {
-      if (!_omittedRecipeColumns.contains(column)) return column;
+      if (!omitted.contains(column)) return column;
     }
     return null;
   }

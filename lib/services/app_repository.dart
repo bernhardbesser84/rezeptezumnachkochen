@@ -51,23 +51,35 @@ class AppRepository {
     return local;
   }
 
-  Future<void> saveRecipe(Recipe recipe) async {
+  /// Speichert ein Rezept lokal und in der Cloud.
+  /// Gibt einen Hinweis zurück, wenn das Vorschaubild noch nicht in die Cloud
+  /// konnte (Spalte image_url fehlt).
+  Future<String?> saveRecipe(Recipe recipe) async {
     final normalized = recipe.copyWith(
       categories: RecipeCategoryService.normalizeAll(recipe.categories),
     );
     await storage.upsertRecipe(normalized);
     await _rememberCategories(normalized.categories);
     final config = _cloud(await storage.loadFamilyConfig());
+    String? cloudWarning;
     if (config != null && config.hasEffectiveCloud) {
       try {
-        await sync.pushRecipe(config, normalized);
+        final result = await sync.pushRecipe(config, normalized);
+        if (result.skippedImageUrl &&
+            (normalized.imageUrl?.trim().isNotEmpty ?? false)) {
+          cloudWarning = FamilySyncService.imageUrlMigrationHint;
+        }
       } catch (e) {
         // Rezept ist lokal gespeichert. Fehlt in der Cloud nur eine neue
         // Spalte (z. B. Vorschaubild), Speichern trotzdem als Erfolg werten.
         if (!FamilySyncService.isIgnorableSchemaError(e)) rethrow;
+        if (normalized.imageUrl?.trim().isNotEmpty ?? false) {
+          cloudWarning = FamilySyncService.imageUrlMigrationHint;
+        }
       }
     }
     await _backupQuietly();
+    return cloudWarning;
   }
 
   /// Neue Kategorien sofort im Katalog merken (für Filter-Chips).
@@ -341,7 +353,10 @@ class AppRepository {
     await storage.saveMealPlanEntries(mergedMealPlan);
 
     try {
-      await sync.pushAllRecipes(config, mergedRecipes);
+      final result = await sync.pushAllRecipes(config, mergedRecipes);
+      if (result.skippedImageUrl) {
+        // Sync war ok, aber Cover-Bilder warten auf die image_url-Spalte.
+      }
     } catch (e) {
       if (!FamilySyncService.isIgnorableSchemaError(e)) rethrow;
     }

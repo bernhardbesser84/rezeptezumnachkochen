@@ -457,7 +457,7 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
         recipe = recipe.copyWith(imageUrl: _linkImageUrl!.trim());
       }
 
-      await widget.repository.saveRecipe(recipe);
+      final cloudWarning = await widget.repository.saveRecipe(recipe);
       if (_alsoShopping) {
         await widget.repository.addRecipeToShopping(recipe);
       }
@@ -465,7 +465,14 @@ class _AddRecipeScreenState extends State<AddRecipeScreen> {
 
       final usedFallback =
           recipe.notes?.contains('KI war gerade nicht nutzbar') == true;
-      if (usedFallback) {
+      if (cloudWarning != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(cloudWarning),
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      } else if (usedFallback) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
