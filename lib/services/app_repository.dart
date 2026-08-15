@@ -59,7 +59,13 @@ class AppRepository {
     await _rememberCategories(normalized.categories);
     final config = _cloud(await storage.loadFamilyConfig());
     if (config != null && config.hasEffectiveCloud) {
-      await sync.pushRecipe(config, normalized);
+      try {
+        await sync.pushRecipe(config, normalized);
+      } catch (e) {
+        // Rezept ist lokal gespeichert. Fehlt in der Cloud nur eine neue
+        // Spalte (z. B. Vorschaubild), Speichern trotzdem als Erfolg werten.
+        if (!FamilySyncService.isIgnorableSchemaError(e)) rethrow;
+      }
     }
     await _backupQuietly();
   }
@@ -334,7 +340,11 @@ class AppRepository {
     await storage.saveShoppingItems(mergedShopping);
     await storage.saveMealPlanEntries(mergedMealPlan);
 
-    await sync.pushAllRecipes(config, mergedRecipes);
+    try {
+      await sync.pushAllRecipes(config, mergedRecipes);
+    } catch (e) {
+      if (!FamilySyncService.isIgnorableSchemaError(e)) rethrow;
+    }
     await sync.pushAllShoppingItems(config, mergedShopping);
     try {
       await sync.pushAllMealPlanEntries(config, mergedMealPlan);
