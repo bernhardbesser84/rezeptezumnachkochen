@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'recipe_extractor.dart';
+import 'facebook_share_resolve.dart';
 import 'youtube_caption.dart';
 
 class FetchedCaption {
@@ -126,20 +127,53 @@ class CaptionFetcher {
       }
     }
 
-    // HTML / Meta
-    final preview = await _extractor.fetchPagePreview(url);
-    var caption = preview.description.trim();
-
-    // Facebook: Beschreibung oft abgeschnitten — längeren Titel-Text nutzen.
-    if (host.contains('facebook.com') || host == 'fb.watch' || host == 'fb.com') {
-      final fromTitle = preview.title.trim();
-      final titleLooksLonger = fromTitle.length > caption.length + 20;
-      final captionTruncated =
-          caption.endsWith('...') || caption.endsWith('…');
-      if (caption.isEmpty || (captionTruncated && titleLooksLonger)) {
-        caption = fromTitle;
+    // HTML / Meta — Facebook-Share ggf. erst zur Reel-URL auflösen.
+    final urlsToTry = <String>[url];
+    if (host.contains('facebook.com') ||
+        host == 'fb.watch' ||
+        host == 'fb.com') {
+      try {
+        final expanded = await FacebookShareResolve(client: _client)
+            .expandCandidateUrls(url);
+        for (final candidate in expanded) {
+          if (!urlsToTry.contains(candidate)) urlsToTry.add(candidate);
+        }
+      } catch (_) {
+        // Mit Original-URL weiterprobieren.
       }
     }
+
+    PagePreview? bestPreview;
+    var caption = '';
+    for (final candidate in urlsToTry) {
+      final preview = await _extractor.fetchPagePreview(candidate);
+      var text = preview.description.trim();
+      final fromTitle = preview.title.trim();
+      if (host.contains('facebook.com') ||
+          host == 'fb.watch' ||
+          host == 'fb.com' ||
+          candidate.contains('facebook.com')) {
+        final titleLooksLonger = fromTitle.length > text.length + 20;
+        final captionTruncated =
+            text.endsWith('...') || text.endsWith('…');
+        if (text.isEmpty || (captionTruncated && titleLooksLonger)) {
+          text = fromTitle;
+        }
+        if (RegExp(
+          r'log into facebook|bei facebook anmelden',
+          caseSensitive: false,
+        ).hasMatch(fromTitle)) {
+          continue;
+        }
+      }
+      if (text.length >= caption.length) {
+        caption = text;
+        bestPreview = preview;
+      }
+      if (caption.length >= 40) break;
+    }
+
+    final preview = bestPreview ?? await _extractor.fetchPagePreview(url);
 
     if (caption.isEmpty) {
       return FetchedCaption(

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'youtube_caption.dart';
+import 'facebook_share_resolve.dart';
 
 /// Lädt die Video-Datei zu einem Rezept-Link (Facebook / YouTube).
 class FetchedVideo {
@@ -227,7 +228,8 @@ class VideoLinkFetcher {
       'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
 
   Future<FetchedVideo> _fetchFacebookDirect(String pageUrl) async {
-    final queue = _facebookUrlVariants(pageUrl);
+    final resolver = FacebookShareResolve(client: _client);
+    final queue = await resolver.expandCandidateUrls(pageUrl);
     final tried = <String>{};
     var sawMediaUrl = false;
 
@@ -290,23 +292,6 @@ class VideoLinkFetcher {
           : 'Facebook hat kein ladbares Video geliefert. '
               'Tipp: Video speichern und unter „Video wählen“ anhängen.',
     );
-  }
-
-  List<String> _facebookUrlVariants(String pageUrl) {
-    final urls = <String>[pageUrl];
-    final uri = Uri.tryParse(pageUrl);
-    if (uri != null) {
-      final host = uri.host.replaceFirst('www.', '').toLowerCase();
-      if (host.contains('facebook.com') || host == 'fb.watch' || host == 'fb.com') {
-        urls.add(
-          uri.replace(host: 'm.facebook.com').toString(),
-        );
-      }
-    }
-    return [
-      for (final url in urls)
-        if (url.isNotEmpty) url,
-    ];
   }
 
   String? _facebookCanonicalUrl(String html) {
