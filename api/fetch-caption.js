@@ -92,50 +92,62 @@ async function fetchHtml(url, userAgent = UA_MOBILE) {
   return { html: await response.text(), finalUrl: response.url || url };
 }
 
+const {
+  expandFacebookCandidateUrls,
+} = require('./facebook_resolve');
+
 async function fetchFacebook(url) {
-  // Facebook liefert og:title/description zuverlässig an Crawler-UAs.
-  // Wichtig: og:description ist oft abgeschnitten („…“),
-  // og:title / og:image:alt enthalten den vollen Text.
+  // Share-Links (/share/r/…) zeigen oft auf story.php (Login).
+  // Zuerst echte Reel-URL auflösen, dann og:title / og:description lesen.
+  const candidates = await expandFacebookCandidateUrls(url);
   const agents = [UA_FACEBOOK, UA_MOBILE];
-  for (const agent of agents) {
-    try {
-      const { html, finalUrl } = await fetchHtml(url, agent);
-      if (html.includes('Error Facebook') && !html.includes('og:title')) {
-        continue;
+  for (const candidate of candidates) {
+    for (const agent of agents) {
+      try {
+        const { html, finalUrl } = await fetchHtml(candidate, agent);
+        if (html.includes('Error Facebook') && !html.includes('og:title')) {
+          continue;
+        }
+        // Login-Seiten haben keinen Rezepttext.
+        if (/log into facebook|bei facebook anmelden/i.test(
+          meta(html, 'og:title') || '',
+        )) {
+          continue;
+        }
+        const ogTitle = decodeEntities(meta(html, 'og:title') || '');
+        const ogImageAlt = decodeEntities(meta(html, 'og:image:alt') || '');
+        const ogDescription = decodeEntities(
+          meta(html, 'og:description') ||
+            metaName(html, 'description') ||
+            metaName(html, 'twitter:description') ||
+            '',
+        );
+        const caption = pickBestFacebookCaption([
+          ogImageAlt,
+          ogTitle,
+          ogDescription,
+          decodeEntities(metaName(html, 'twitter:image:alt') || ''),
+        ]);
+        const title = cleanDishTitle(ogTitle || caption);
+        const ogUrl = decodeEntities(meta(html, 'og:url') || '').trim();
+        const imageUrl = decodeEntities(
+          meta(html, 'og:image') ||
+            meta(html, 'og:image:url') ||
+            meta(html, 'og:image:secure_url') ||
+            '',
+        ).trim();
+        if (caption || title) {
+          return {
+            title,
+            caption,
+            source: caption ? 'facebook-og' : 'none',
+            canonicalUrl: ogUrl || finalUrl || candidate,
+            imageUrl,
+          };
+        }
+      } catch (_) {
+        // Nächsten UA / Link versuchen.
       }
-      const ogTitle = decodeEntities(meta(html, 'og:title') || '');
-      const ogImageAlt = decodeEntities(meta(html, 'og:image:alt') || '');
-      const ogDescription = decodeEntities(
-        meta(html, 'og:description') ||
-          metaName(html, 'description') ||
-          metaName(html, 'twitter:description') ||
-          '',
-      );
-      const caption = pickBestFacebookCaption([
-        ogImageAlt,
-        ogTitle,
-        ogDescription,
-        decodeEntities(metaName(html, 'twitter:image:alt') || ''),
-      ]);
-      const title = cleanDishTitle(ogTitle || caption);
-      const ogUrl = decodeEntities(meta(html, 'og:url') || '').trim();
-      const imageUrl = decodeEntities(
-        meta(html, 'og:image') ||
-          meta(html, 'og:image:url') ||
-          meta(html, 'og:image:secure_url') ||
-          '',
-      ).trim();
-      if (caption || title) {
-        return {
-          title,
-          caption,
-          source: caption ? 'facebook-og' : 'none',
-          canonicalUrl: ogUrl || finalUrl || url,
-          imageUrl,
-        };
-      }
-    } catch (_) {
-      // Nächsten UA versuchen.
     }
   }
   return {

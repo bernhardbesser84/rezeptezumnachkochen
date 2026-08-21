@@ -264,6 +264,10 @@ async function fetchHtml(url, userAgent) {
   };
 }
 
+const {
+  expandFacebookCandidateUrls,
+} = require('./facebook_resolve');
+
 /**
  * Facebook-Share-Links (/share/r/…) liefern oft nur die Caption.
  * Die MP4-URL steckt in og:video beim iPhone-UA — oder erst auf der Reel-URL.
@@ -271,7 +275,7 @@ async function fetchHtml(url, userAgent) {
  */
 async function fetchFacebookVideo(pageUrl) {
   const agents = [UA_IPHONE, UA_GOOGLEBOT, UA_FACEBOOK];
-  const queue = facebookUrlVariants(pageUrl);
+  const queue = await expandFacebookCandidateUrls(pageUrl);
   const triedPages = new Set();
   let sawMediaUrl = false;
 
