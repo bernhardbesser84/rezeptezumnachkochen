@@ -33,7 +33,7 @@ class _PdfRecipeScreenState extends State<PdfRecipeScreen> {
   Uint8List? _pdfBytes;
   String? _fileName;
   String? _previewText;
-  bool _alsoShopping = true;
+  bool _alsoShopping = false;
   bool _busy = false;
   String? _status;
   String? _error;

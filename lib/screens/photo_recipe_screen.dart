@@ -35,7 +35,7 @@ class _PhotoRecipeScreenState extends State<PhotoRecipeScreen> {
   final _steps = TextEditingController();
 
   final List<RecipeImageInput> _images = [];
-  bool _alsoShopping = true;
+  bool _alsoShopping = false;
   bool _busy = false;
   String? _status;
   String? _error;
